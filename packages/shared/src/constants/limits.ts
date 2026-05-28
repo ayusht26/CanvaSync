@@ -1,0 +1,7 @@
+export const MAX_ROOM_USERS = 20;
+export const MAX_SHAPES = 5000;
+
+export const RATE_LIMITS = {
+  WS_MESSAGES_PER_SECOND: 100,
+  REST_REQUESTS_PER_MINUTE: 60,
+};

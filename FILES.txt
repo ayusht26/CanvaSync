@@ -1,0 +1,4278 @@
+LLM.md
+# LLM.md — CanvaSync Architecture & Context
+
+> **Note to AI Assistants:** Read this file carefully to understand the context, architecture, tech stack, and file structure of CanvaSync before generating or modifying any code.
+
+## 1. Project Overview
+**CanvaSync** is a production-grade, real-time collaborative infinite whiteboard SaaS application. It features a custom high-performance HTML5 Canvas rendering engine, conflict-free real-time multiplayer synchronization via Yjs, and a premium dark-mode glassmorphic UI.
+
+## 2. Tech Stack & Libraries
+*   **Monorepo:** pnpm workspaces, Turborepo.
+*   **Frontend (`apps/web`):**
+    *   **Framework:** React 18, Vite.
+    *   **Styling:** Tailwind CSS, PostCSS.
+    *   **UI/Animations:** Framer Motion, `tailwindcss-animate`, Lucide React (Icons).
+    *   **State Management:** Zustand (Stores: Canvas, Shapes, Selection, Style, Room).
+    *   **Multiplayer/CRDT:** `yjs`, `y-websocket`.
+    *   **Persistence:** `idb` (IndexedDB for local saves).
+*   **Backend (`apps/server`):**
+    *   **Framework:** Fastify.
+    *   **WebSockets:** `@fastify/websocket`.
+    *   **Database:** PostgreSQL (Supabase).
+    *   **DB Client:** `postgres.js`.
+*   **Shared (`packages/shared`):** TypeScript types and constants shared across web and server.
+
+## 3. Important Commands
+Run these from the root directory:
+*   `pnpm install`: Install all dependencies.
+*   `pnpm dev`: Start both the frontend and backend development servers concurrently.
+*   `pnpm build`: Build the monorepo packages.
+*   `pnpm typecheck`: Run TypeScript compilation check across all packages (`tsc --noEmit`).
+
+## 4. File Structure & Explanations
+
+### `packages/shared/src/`
+Defines the single source of truth for data structures.
+*   **`types/shapes.ts`**: TypeScript interfaces for every shape type (`RectangleShape`, `PenShape`, etc.), `BoundingBox`, and `Point`.
+*   **`types/presence.ts`**: Defines `AwarenessState` (user cursor position, name, color).
+*   **`types/room.ts`**: Defines room and user metadata.
+*   **`constants/tools.ts`**: `ToolName` enum to prevent typos.
+*   **`constants/defaults.ts`**: Default UI styling constants (stroke width, color, fonts).
+
+### `apps/web/src/canvas/`
+The core engine manipulating the HTML5 `<canvas>`.
+*   **`CanvasEngine.ts`**: Manages the `requestAnimationFrame` loop. Calls the `Renderer` to draw every frame. Handles `ResizeObserver`.
+*   **`Camera.ts`**: Tracks `x, y, zoom` state. Calculates panning and zooming constraints using a multiplicative factor for zoom (like Figma).
+*   **`SceneGraph.ts`**: An ordered array of `Shape` objects. Handles z-indexing (`bringToFront`, `sendBackward`), additions, removals, and duplicates. Uses an Observer pattern to trigger React updates.
+*   **`TransformUtils.ts`**: Translates coordinates between Screen Space (UI/mouse) and World Space (Canvas). Applies the Camera matrix (`ctx.setTransform`) considering `devicePixelRatio`.
+*   **`HitDetection.ts`**: Math logic for determining if a point/rect intersects with a shape (handles rotation, AABB, and line proximity).
+*   **`CanvasEventHandler.ts`**: Binds browser DOM events (`pointerdown`, `wheel`, `keydown`) and translates them into `ToolEvent`s passed to the active tool. It injects actual Zustand stores into the event payload.
+
+### `apps/web/src/renderer/`
+Drawing logic separated from state.
+*   **`Renderer.ts`**: The main orchestrator. Clears canvas (using physical pixels) → applies camera → draws grid → draws shapes → draws UI overlays (selection, cursors).
+*   **`GridRenderer.ts`**: Draws a subtle, infinite, theme-aware dual-line grid.
+*   **`SelectionRenderer.ts`**: Draws the blue bounding box, 8 resize handles, and the rotation handle around selected shapes, plus the drag-to-select rubber-band box.
+*   **`CursorRenderer.ts`**: Draws live collaborator pointers and name tags.
+*   **`ShapeRenderer.ts`**: A dispatcher that routes a generic `Shape` to its specific class (e.g., `RectangleRenderer`).
+*   **`shapes/*.ts`**: Contains exact `ctx` drawing logic for `Rectangle`, `Ellipse`, `Triangle`, `Rhombus`, `Line`, `Arrow`, `Pen` (splines), and `Text`.
+
+### `apps/web/src/tools/`
+Interaction logic handling user inputs.
+*   **`ToolManager.ts`**: Holds a registry of all tools. Tracks the currently active tool. Manages temporary Spacebar-pan overrides and clears selection when switching away from the Selection tool.
+*   **`BaseTool.ts`**: Abstract class defining `onPointerDown`, `Move`, `Up`, `KeyDown`.
+*   **`SelectionTool.ts`**: Complex tool for clicking to select, shift-clicking for multi-select, dragging to move elements, drawing rubber-band selection boxes, and dragging handles to resize/rotate.
+*   **`ShapeTool.ts`**: Base class for drag-to-create shapes (Rect, Ellipse, Triangle, Rhombus). Handles `Shift` for 1:1 aspect ratio constraint.
+*   **`PenTool.ts`**: Captures points while dragging to create freehand splines.
+*   **`LineTool.ts` / `ArrowTool.ts`**: Click and drag to create lines. Supports `Shift` snapping to 45° increments.
+*   **`TextTool.ts`**: On click, spawns an absolute-positioned HTML `<textarea>` over the canvas. On blur, converts text into a Canvas `TextShape`. Supports font families, sizes, and alignment.
+*   **`PanTool.ts`**: Middle-click or Space+drag to move the camera.
+*   **`EraserTool.ts`**: Deletes shapes the pointer passes over. Supports 'whole element' or 'partial' erasing with adjustable sizes.
+
+### `apps/web/src/store/`
+Zustand global state. Bridging React UI with Canvas logic.
+*   **`useCanvasStore.ts`**: Tracks `activeTool`, `theme`, and mirrors the `camera` state.
+*   **`useShapeStore.ts`**: React-reactive clone of the SceneGraph shapes. Used by UI to know what exists.
+*   **`useSelectionStore.ts`**: Tracks `selectedIds` (Set) and the drag `selectionBox`.
+*   **`useStyleStore.ts`**: Tracks active color, stroke, fill, and opacity selected by the user.
+*   **`useRoomStore.ts`**: Tracks multiplayer state (`roomId`, `localUser`, `collaborators`).
+
+### `apps/web/src/hooks/`
+React lifecycle and side effects.
+*   **`useCanvas.ts`**: The glue hook. Initializes the CanvasEngine, Camera, SceneGraph, registers all Tools, and sets up synchronization between Zustand stores and the class-based engine. Crucially, it manages the one-way data flow `SceneGraph -> Store` to avoid infinite feedback loops.
+*   **`useKeyboard.ts`**: Global keyboard shortcuts (V, P, R, Delete, Ctrl+A, Ctrl+D, brackets for layers).
+*   **`useTheme.ts`**: Initializes theme from `localStorage` and manages CSS variables (`--bg-primary`, etc.) for dark/light mode.
+*   **`useResize.ts`**: Binds a `ResizeObserver` to keep the canvas filling the window physically.
+*   **`usePersistence.ts`**: Automatically saves local canvas state to `IndexedDB` every second and loads it directly into the `SceneGraph` on boot.
+*   **`useMultiplayer.ts`**: Handles connecting to Yjs when a `roomId` is present.
+
+### `apps/web/src/multiplayer/` & `presence/`
+Real-time logic.
+*   **`YjsProvider.ts`**: Initializes `Y.Doc` and `y-websocket` provider.
+*   **`SyncManager.ts`**: Two-way data binding. Observes `SceneGraph` changes to update Yjs `elements` map, and observes Yjs to update the `SceneGraph` (remote changes).
+*   **`RoomManager.ts`**: REST API wrapper to `POST /rooms` to get a room ID, and navigation logic.
+*   **`PresenceManager.ts`**: Translates Yjs `awareness` state into `useRoomStore.collaborators`. Broadcasts local mouse position.
+
+### `apps/web/src/ui/`
+React Components (Aesthetics: Dark mode, glassmorphism).
+*   **`TopBar.tsx`**: Header with logo, editable name, inline zoom controls (+, -, %), collaborator avatars, theme toggle, and Share button.
+*   **`Toolbar.tsx`**: Floating vertical pill on the left containing all `ToolButton`s. Scrollable (`overflow-y: auto`, `no-scrollbar`).
+*   **`StylePanel.tsx`**: Contextual panel sliding in from the right. Dynamically renders options based on the active tool (e.g., Font settings for Text tool, Size settings for Eraser, Stroke/Fill for shapes). Stops pointer event propagation to prevent drawing under the panel.
+*   **`AnimatedThemeToggler.tsx`**: Uses Framer Motion and the View Transitions API for a circular expanding theme reveal animation.
+*   **`CreateRoomModal.tsx` & `JoinRoomModal.tsx`**: Overlays for creating/joining multiplayer sessions.
+
+### `apps/server/src/`
+Backend logic (Fastify).
+*   **`index.ts`**: Server setup, CORS, rate limiting.
+*   **`db/connection.ts`**: Connects to Supabase PostgreSQL using `postgres.js`.
+*   **`db/migrations/*.sql`**: SQL schemas for `rooms` and `elements` tables.
+*   **`db/queries/*.ts`**: Data access layer for inserting/fetching rooms and shapes.
+*   **`routes/rooms.ts`**: `POST /rooms` to generate a nanoid room and insert it into the DB.
+*   **`websocket/WebSocketServer.ts`**: Attaches `y-websocket` to the Fastify instance. Handles persistence (saving idle Yjs documents to PostgreSQL).
+
+
+apps/web/src/App.tsx
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import LocalCanvas from './pages/LocalCanvas.js';
+import RoomCanvas from './pages/RoomCanvas.js';
+import { useTheme } from './hooks/useTheme.js';
+import { useKeyboard } from './hooks/useKeyboard.js';
+
+function App() {
+  // Initialize global hooks
+  useTheme();
+  useKeyboard();
+
+  return (
+    <Router>
+      <div className="w-screen h-screen overflow-hidden bg-background-primary transition-colors duration-300">
+        <Routes>
+          <Route path="/" element={<LocalCanvas />} />
+          <Route path="/room/:id" element={<RoomCanvas />} />
+        </Routes>
+      </div>
+    </Router>
+  );
+}
+
+export default App;
+
+
+apps/web/src/canvas/Camera.ts
+export class Camera {
+  x = 0;
+  y = 0;
+  zoom = 1;
+
+  private readonly MIN_ZOOM = 0.05;
+  private readonly MAX_ZOOM = 20;
+
+  panBy(dx: number, dy: number) {
+    this.x += dx;
+    this.y += dy;
+  }
+
+  setZoom(zoom: number) {
+    this.zoom = Math.max(this.MIN_ZOOM, Math.min(this.MAX_ZOOM, zoom));
+  }
+
+  zoomAt(screenX: number, screenY: number, delta: number) {
+    const oldZoom = this.zoom;
+    const newZoom = Math.max(this.MIN_ZOOM, Math.min(this.MAX_ZOOM, oldZoom * delta));
+    
+    if (oldZoom === newZoom) return;
+
+    // worldPoint = (screenPoint - cameraOffset) / oldZoom
+    // screenPoint = worldPoint * newZoom + newCameraOffset
+    // => newCameraOffset = screenPoint - worldPoint * newZoom
+
+    const worldX = (screenX - this.x) / oldZoom;
+    const worldY = (screenY - this.y) / oldZoom;
+
+    this.zoom = newZoom;
+    this.x = screenX - worldX * newZoom;
+    this.y = screenY - worldY * newZoom;
+  }
+}
+
+
+apps/web/src/canvas/CanvasEngine.ts
+import { Camera } from './Camera';
+import { SceneGraph } from './SceneGraph';
+import { Renderer } from '../renderer/Renderer';
+
+export class CanvasEngine {
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
+  private camera: Camera;
+  private sceneGraph: SceneGraph;
+  private animationFrameId: number | null = null;
+  private resizeObserver: ResizeObserver;
+
+  constructor(canvas: HTMLCanvasElement, camera: Camera, sceneGraph: SceneGraph) {
+    this.canvas = canvas;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not get 2d context');
+    this.ctx = context;
+    this.camera = camera;
+    this.sceneGraph = sceneGraph;
+
+    this.resizeObserver = new ResizeObserver(() => this.handleResize());
+    this.resizeObserver.observe(this.canvas);
+    this.handleResize();
+  }
+
+  private handleResize() {
+    const rect = this.canvas.parentElement?.getBoundingClientRect() || this.canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    
+    this.canvas.width = rect.width * dpr;
+    this.canvas.height = rect.height * dpr;
+    
+    // The canvas style width/height should be set to match the logical size
+    this.canvas.style.width = `${rect.width}px`;
+    this.canvas.style.height = `${rect.height}px`;
+
+    this.render();
+  }
+
+  start() {
+    if (this.animationFrameId !== null) return;
+    const loop = () => {
+      this.render();
+      this.animationFrameId = requestAnimationFrame(loop);
+    };
+    this.animationFrameId = requestAnimationFrame(loop);
+  }
+
+  stop() {
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+  }
+
+  public render() {
+    Renderer.render(this.ctx, this.sceneGraph, this.camera);
+  }
+
+  public getSceneGraph() {
+    return this.sceneGraph;
+  }
+
+  public getCamera() {
+    return this.camera;
+  }
+
+  destroy() {
+    this.stop();
+    this.resizeObserver.disconnect();
+  }
+}
+
+
+apps/web/src/canvas/CanvasEventHandler.ts
+import { CanvasEngine } from './CanvasEngine.js';
+import { Camera } from './Camera.js';
+import { SceneGraph } from './SceneGraph.js';
+import { TransformUtils } from './TransformUtils.js';
+import { ToolManager } from '../tools/ToolManager.js';
+import { ToolEvent } from '../tools/BaseTool.js';
+import { useCanvasStore } from '../store/useCanvasStore.js';
+import { useSelectionStore } from '../store/useSelectionStore.js';
+import { useStyleStore } from '../store/useStyleStore.js';
+
+export class CanvasEventHandler {
+  private canvas: HTMLCanvasElement;
+  private engine: CanvasEngine;
+  private camera: Camera;
+  private sceneGraph: SceneGraph;
+  private toolManager: ToolManager;
+
+  constructor(
+    canvas: HTMLCanvasElement,
+    engine: CanvasEngine,
+    camera: Camera,
+    sceneGraph: SceneGraph,
+    toolManager: ToolManager
+  ) {
+    this.canvas = canvas;
+    this.engine = engine;
+    this.camera = camera;
+    this.sceneGraph = sceneGraph;
+    this.toolManager = toolManager;
+
+    this.setupListeners();
+  }
+
+  private setupListeners() {
+    this.canvas.addEventListener('pointerdown', this.handlePointerDown);
+    this.canvas.addEventListener('pointermove', this.handlePointerMove);
+    this.canvas.addEventListener('pointerup', this.handlePointerUp);
+    this.canvas.addEventListener('wheel', this.handleWheel, { passive: false });
+    window.addEventListener('keydown', this.handleKeyDown);
+    window.addEventListener('keyup', this.handleKeyUp);
+  }
+
+  public cleanup() {
+    this.canvas.removeEventListener('pointerdown', this.handlePointerDown);
+    this.canvas.removeEventListener('pointermove', this.handlePointerMove);
+    this.canvas.removeEventListener('pointerup', this.handlePointerUp);
+    this.canvas.removeEventListener('wheel', this.handleWheel);
+    window.removeEventListener('keydown', this.handleKeyDown);
+    window.removeEventListener('keyup', this.handleKeyUp);
+  }
+
+  private createToolEvent(e: PointerEvent): ToolEvent {
+    const rect = this.canvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    const worldPoint = TransformUtils.screenToWorld({ x: screenX, y: screenY }, this.camera);
+
+    return {
+      screenX,
+      screenY,
+      worldX: worldPoint.x,
+      worldY: worldPoint.y,
+      shiftKey: e.shiftKey,
+      ctrlKey: e.ctrlKey || e.metaKey,
+      pressure: e.pressure,
+      sceneGraph: this.sceneGraph,
+      selectionStore: useSelectionStore,
+      canvasStore: useCanvasStore,
+      styleStore: useStyleStore,
+    };
+  }
+
+  private handlePointerDown = (e: PointerEvent) => {
+    this.canvas.setPointerCapture(e.pointerId);
+    const toolEvent = this.createToolEvent(e);
+    const activeTool = this.toolManager.getActiveTool();
+    if (activeTool) activeTool.onPointerDown(toolEvent);
+  };
+
+  private handlePointerMove = (e: PointerEvent) => {
+    const toolEvent = this.createToolEvent(e);
+    const activeTool = this.toolManager.getActiveTool();
+    if (activeTool) activeTool.onPointerMove(toolEvent);
+  };
+
+  private handlePointerUp = (e: PointerEvent) => {
+    this.canvas.releasePointerCapture(e.pointerId);
+    const toolEvent = this.createToolEvent(e);
+    const activeTool = this.toolManager.getActiveTool();
+    if (activeTool) activeTool.onPointerUp(toolEvent);
+  };
+
+  private handleWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const rect = this.canvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+
+    if (e.ctrlKey || e.metaKey) {
+      let normalizedDelta = e.deltaY;
+      if (e.deltaMode === 1) normalizedDelta *= 16;
+      if (e.deltaMode === 2) normalizedDelta *= 400;
+
+      const zoomFactor = Math.pow(0.999, normalizedDelta);
+      this.camera.zoomAt(screenX, screenY, zoomFactor);
+    } else {
+      this.camera.panBy(-e.deltaX, -e.deltaY);
+    }
+
+    useCanvasStore.getState().updateCamera({
+      x: this.camera.x,
+      y: this.camera.y,
+      zoom: this.camera.zoom,
+    });
+    this.engine.render();
+  };
+
+  private handleKeyDown = (e: KeyboardEvent) => {
+    const activeTool = this.toolManager.getActiveTool();
+    if (activeTool && activeTool.onKeyDown) {
+      activeTool.onKeyDown(e);
+    }
+  };
+
+  private handleKeyUp = (e: KeyboardEvent) => {
+    const activeTool = this.toolManager.getActiveTool();
+    if (activeTool && activeTool.onKeyUp) {
+      activeTool.onKeyUp(e);
+    }
+  };
+}
+
+
+apps/web/src/canvas/HitDetection.ts
+import { Shape, Point, BoundingBox } from '@canvasync/shared';
+
+export class HitDetection {
+  static isPointInShape(point: Point, shape: Shape): boolean {
+    // 1. Rotate the point back by the negative of shape's rotation around shape's center
+    const centerX = shape.x + shape.width / 2;
+    const centerY = shape.y + shape.height / 2;
+    
+    const rotatedPoint = this.rotatePoint(point, { x: centerX, y: centerY }, -shape.rotation);
+
+    // 2. Check if the rotated point is inside the axis-aligned bounding box of the shape
+    switch (shape.type) {
+      case 'rectangle':
+      case 'ellipse':
+      case 'triangle':
+      case 'rhombus':
+      case 'text':
+        return (
+          rotatedPoint.x >= shape.x &&
+          rotatedPoint.x <= shape.x + shape.width &&
+          rotatedPoint.y >= shape.y &&
+          rotatedPoint.y <= shape.y + shape.height
+        );
+      case 'pen': {
+        if (shape.width < 1 && shape.height < 1) return false;
+        // Use proximity to any point in the path for pen
+        const pts = (shape as any).points as { x: number; y: number }[];
+        if (!pts) return false;
+        return pts.some(p => Math.hypot(p.x - rotatedPoint.x, p.y - rotatedPoint.y) < 8);
+      }
+      case 'line':
+      case 'arrow': {
+        const pts = (shape as any).points as { x: number; y: number }[];
+        if (!pts || pts.length < 2) return false;
+        return this.isPointNearLine(rotatedPoint, pts[0].x, pts[0].y, pts[1].x, pts[1].y, 8);
+      }
+      default:
+        return false;
+    }
+  }
+
+  static isRectInShape(rect: BoundingBox, shape: Shape): boolean {
+    // Simplified AABB intersection for now
+    // In a real app, we'd do SAT (Separating Axis Theorem) for rotated shapes
+    const shapeBounds = {
+      left: shape.x,
+      right: shape.x + shape.width,
+      top: shape.y,
+      bottom: shape.y + shape.height
+    };
+
+    const rectBounds = {
+      left: rect.x,
+      right: rect.x + rect.width,
+      top: rect.y,
+      bottom: rect.y + rect.height
+    };
+
+    return !(
+      rectBounds.left > shapeBounds.right ||
+      rectBounds.right < shapeBounds.left ||
+      rectBounds.top > shapeBounds.bottom ||
+      rectBounds.bottom < shapeBounds.top
+    );
+  }
+
+  private static rotatePoint(point: Point, center: Point, angle: number): Point {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+
+    return {
+      x: center.x + dx * cos - dy * sin,
+      y: center.y + dx * sin + dy * cos
+    };
+  }
+
+  private static isPointNearLine(p: Point, x1: number, y1: number, x2: number, y2: number, threshold: number): boolean {
+    const L2 = (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1);
+    if (L2 === 0) return Math.sqrt((p.x - x1) * (p.x - x1) + (p.y - y1) * (p.y - y1)) <= threshold;
+    
+    let t = ((p.x - x1) * (x2 - x1) + (p.y - y1) * (y2 - y1)) / L2;
+    t = Math.max(0, Math.min(1, t));
+    
+    const projectionX = x1 + t * (x2 - x1);
+    const projectionY = y1 + t * (y2 - y1);
+    
+    const dist = Math.sqrt((p.x - projectionX) * (p.x - projectionX) + (p.y - projectionY) * (p.y - projectionY));
+    return dist <= threshold;
+  }
+}
+
+
+apps/web/src/canvas/SceneGraph.ts
+import { Shape } from '@canvasync/shared';
+import { nanoid } from 'nanoid';
+
+export type SceneObserver = () => void;
+
+export class SceneGraph {
+  private shapes: Shape[] = [];
+  private observers: Set<SceneObserver> = new Set();
+
+  public getElements(): Shape[] {
+    return this.shapes;
+  }
+
+  setShapes(shapes: Shape[]) {
+    this.shapes = [...shapes];
+    this.notify();
+  }
+
+  add(shape: Shape) {
+    this.shapes.push(shape);
+    this.notify();
+  }
+
+  remove(id: string) {
+    this.shapes = this.shapes.filter((s) => s.id !== id);
+    this.notify();
+  }
+
+  update(id: string, updates: Partial<Shape>) {
+    this.shapes = this.shapes.map((s) =>
+      s.id === id ? ({ ...s, ...updates } as Shape) : s
+    );
+    this.notify();
+  }
+
+  getById(id: string): Shape | undefined {
+    return this.shapes.find((s) => s.id === id);
+  }
+
+  bringToFront(id: string) {
+    const index = this.shapes.findIndex((s) => s.id === id);
+    if (index === -1 || index === this.shapes.length - 1) return;
+    const [shape] = this.shapes.splice(index, 1);
+    this.shapes.push(shape);
+    this.notify();
+  }
+
+  sendToBack(id: string) {
+    const index = this.shapes.findIndex((s) => s.id === id);
+    if (index === -1 || index === 0) return;
+    const [shape] = this.shapes.splice(index, 1);
+    this.shapes.unshift(shape);
+    this.notify();
+  }
+
+  bringForward(id: string) {
+    const index = this.shapes.findIndex((s) => s.id === id);
+    if (index === -1 || index === this.shapes.length - 1) return;
+    [this.shapes[index], this.shapes[index + 1]] = [
+      this.shapes[index + 1],
+      this.shapes[index],
+    ];
+    this.notify();
+  }
+
+  sendBackward(id: string) {
+    const index = this.shapes.findIndex((s) => s.id === id);
+    if (index === -1 || index === 0) return;
+    [this.shapes[index], this.shapes[index - 1]] = [
+      this.shapes[index - 1],
+      this.shapes[index],
+    ];
+    this.notify();
+  }
+
+  duplicate(id: string, offsetX = 20, offsetY = 20): Shape | null {
+    const shape = this.getById(id);
+    if (!shape) return null;
+    const copy = { ...shape, id: nanoid(), x: shape.x + offsetX, y: shape.y + offsetY, createdAt: Date.now(), updatedAt: Date.now() };
+    this.shapes.push(copy as Shape);
+    this.notify();
+    return copy as Shape;
+  }
+
+  subscribe(observer: SceneObserver) {
+    this.observers.add(observer);
+    return () => this.observers.delete(observer);
+  }
+
+  private notify() {
+    this.observers.forEach((obs) => obs());
+  }
+}
+
+
+
+apps/web/src/canvas/TransformUtils.ts
+import { Point } from '@canvasync/shared';
+import { Camera } from './Camera';
+
+export class TransformUtils {
+  static screenToWorld(point: Point, camera: Camera): Point {
+    return {
+      x: (point.x - camera.x) / camera.zoom,
+      y: (point.y - camera.y) / camera.zoom,
+    };
+  }
+
+  static worldToScreen(point: Point, camera: Camera): Point {
+    return {
+      x: point.x * camera.zoom + camera.x,
+      y: point.y * camera.zoom + camera.y,
+    };
+  }
+
+  static applyTransform(ctx: CanvasRenderingContext2D, camera: Camera) {
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(
+      camera.zoom * dpr,
+      0,
+      0,
+      camera.zoom * dpr,
+      camera.x * dpr,
+      camera.y * dpr
+    );
+  }
+}
+
+
+apps/web/src/hooks/useCanvas.ts
+import { useEffect, useRef, useMemo } from 'react';
+import { Camera } from '../canvas/Camera.js';
+import { SceneGraph } from '../canvas/SceneGraph.js';
+import { CanvasEngine } from '../canvas/CanvasEngine.js';
+import { CanvasEventHandler } from '../canvas/CanvasEventHandler.js';
+import { ToolManager } from '../tools/ToolManager.js';
+import { useCanvasStore } from '../store/useCanvasStore.js';
+import { useShapeStore } from '../store/useShapeStore.js';
+import { ToolName } from '@canvasync/shared';
+
+import { SelectionTool } from '../tools/SelectionTool.js';
+import { PanTool } from '../tools/PanTool.js';
+import { PenTool } from '../tools/PenTool.js';
+import { RectangleTool } from '../tools/RectangleTool.js';
+import { EllipseTool } from '../tools/EllipseTool.js';
+import { TriangleTool } from '../tools/TriangleTool.js';
+import { RhombusTool } from '../tools/RhombusTool.js';
+import { LineTool } from '../tools/LineTool.js';
+import { ArrowTool } from '../tools/ArrowTool.js';
+import { TextTool } from '../tools/TextTool.js';
+import { EraserTool } from '../tools/EraserTool.js';
+
+export const useCanvas = () => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const toolManagerRef = useRef<ToolManager | null>(null);
+  const engineRef = useRef<CanvasEngine | null>(null);
+  const sceneGraphRef = useRef<SceneGraph | null>(null);
+
+  const camera = useMemo(() => new Camera(), []);
+  const sceneGraph = useMemo(() => new SceneGraph(), []);
+  sceneGraphRef.current = sceneGraph;
+
+  const activeToolName = useCanvasStore((state) => state.activeTool);
+  const elements = useShapeStore((state) => state.elements);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const canvas = canvasRef.current;
+    const engine = new CanvasEngine(canvas, camera, sceneGraph);
+    engineRef.current = engine;
+
+    const toolManager = new ToolManager(engine);
+    toolManagerRef.current = toolManager;
+
+    // Register all tools
+    toolManager.registerTool(ToolName.SELECTION, new SelectionTool(engine));
+    toolManager.registerTool(ToolName.PAN, new PanTool(engine));
+    toolManager.registerTool(ToolName.PEN, new PenTool(engine));
+    toolManager.registerTool(ToolName.RECTANGLE, new RectangleTool(engine));
+    toolManager.registerTool(ToolName.ELLIPSE, new EllipseTool(engine));
+    toolManager.registerTool(ToolName.TRIANGLE, new TriangleTool(engine));
+    toolManager.registerTool(ToolName.RHOMBUS, new RhombusTool(engine));
+    toolManager.registerTool(ToolName.LINE, new LineTool(engine));
+    toolManager.registerTool(ToolName.ARROW, new ArrowTool(engine));
+    toolManager.registerTool(ToolName.TEXT, new TextTool(engine));
+    toolManager.registerTool(ToolName.ERASER, new EraserTool(engine));
+
+    toolManager.setTool(useCanvasStore.getState().activeTool);
+
+    const eventHandler = new CanvasEventHandler(canvas, engine, camera, sceneGraph, toolManager);
+    sceneGraph.setShapes(useShapeStore.getState().elements);
+    engine.start();
+
+    // Sync Zustand camera store → Camera class (for zoom button clicks)
+    const unsub = useCanvasStore.subscribe((state) => {
+      const c = state.camera;
+      if (camera.x !== c.x || camera.y !== c.y || camera.zoom !== c.zoom) {
+        camera.x = c.x;
+        camera.y = c.y;
+        camera.zoom = c.zoom;
+        engine.render();
+      }
+    });
+
+    // Sync SceneGraph → shape store on changes
+    const unsubScene = sceneGraph.subscribe(() => {
+      useShapeStore.getState().setElements(sceneGraph.getElements());
+    });
+
+    return () => {
+      engine.destroy();
+      eventHandler.cleanup();
+      unsub();
+      unsubScene();
+      toolManagerRef.current = null;
+      engineRef.current = null;
+    };
+  }, [camera, sceneGraph]);
+
+  // Sync active tool from store → ToolManager
+  useEffect(() => {
+    toolManagerRef.current?.setTool(activeToolName);
+  }, [activeToolName]);
+
+  return { canvasRef, camera, sceneGraph };
+};
+
+
+apps/web/src/hooks/useKeyboard.ts
+import { useEffect } from 'react';
+import { useCanvasStore } from '../store/useCanvasStore.js';
+import { useSelectionStore } from '../store/useSelectionStore.js';
+import { useShapeStore } from '../store/useShapeStore.js';
+import { ToolName } from '@canvasync/shared';
+import { nanoid } from 'nanoid';
+
+export const useKeyboard = () => {
+  const setActiveTool = useCanvasStore((state) => state.setActiveTool);
+  const setSpacebarHeld = useCanvasStore((state) => state.setSpacebarHeld);
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      const selectedIds = useSelectionStore.getState().selectedIds;
+      const { removeShape, addShape, elements } = useShapeStore.getState();
+
+      switch (e.key.toLowerCase()) {
+        case 'v': setActiveTool(ToolName.SELECTION); break;
+        case 'h': setActiveTool(ToolName.PAN); break;
+        case 'p': setActiveTool(ToolName.PEN); useSelectionStore.getState().clearSelection(); break;
+        case 'r': setActiveTool(ToolName.RECTANGLE); useSelectionStore.getState().clearSelection(); break;
+        case 'e': setActiveTool(ToolName.ELLIPSE); useSelectionStore.getState().clearSelection(); break;
+        case 'g': setActiveTool(ToolName.TRIANGLE); useSelectionStore.getState().clearSelection(); break;
+        case 'd': if (!e.ctrlKey && !e.metaKey) { setActiveTool(ToolName.RHOMBUS); useSelectionStore.getState().clearSelection(); } break;
+        case 'l': setActiveTool(ToolName.LINE); useSelectionStore.getState().clearSelection(); break;
+        case 'a': if (!e.ctrlKey && !e.metaKey) { setActiveTool(ToolName.ARROW); useSelectionStore.getState().clearSelection(); } break;
+        case 't': setActiveTool(ToolName.TEXT); useSelectionStore.getState().clearSelection(); break;
+        case 'x': setActiveTool(ToolName.ERASER); useSelectionStore.getState().clearSelection(); break;
+        case ' ': e.preventDefault(); setSpacebarHeld(true); break;
+        case 'escape':
+          useSelectionStore.getState().clearSelection();
+          setActiveTool(ToolName.SELECTION);
+          break;
+        case 'delete':
+        case 'backspace':
+          selectedIds.forEach((id) => removeShape(id));
+          useSelectionStore.getState().clearSelection();
+          break;
+        case '[':
+          // send backward — handled via sceneGraph directly; emit custom event
+          window.dispatchEvent(new CustomEvent('canvas:layer', { detail: { action: 'backward' } }));
+          break;
+        case ']':
+          window.dispatchEvent(new CustomEvent('canvas:layer', { detail: { action: 'forward' } }));
+          break;
+      }
+
+      // Ctrl+A — select all
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        const allIds = new Set(elements.map(s => s.id));
+        useSelectionStore.getState().setSelectedIds(allIds);
+      }
+
+      // Ctrl+D — duplicate
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        selectedIds.forEach((id) => {
+          const shape = elements.find(s => s.id === id);
+          if (!shape) return;
+          const copy = { ...shape, id: nanoid(), x: shape.x + 20, y: shape.y + 20, createdAt: Date.now(), updatedAt: Date.now() };
+          addShape(copy as any);
+        });
+      }
+
+      // Ctrl+Z — undo (stub — wire to useHistoryStore)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        // TODO: useHistoryStore.getState().undo()
+      }
+
+      // Ctrl+Shift+Z — redo
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && e.shiftKey) {
+        e.preventDefault();
+        // TODO: useHistoryStore.getState().redo()
+      }
+    };
+
+    const up = (e: KeyboardEvent) => {
+      if (e.key === ' ') setSpacebarHeld(false);
+    };
+
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
+  }, [setActiveTool, setSpacebarHeld]);
+};
+
+
+apps/web/src/hooks/useMultiplayer.ts
+import { useEffect, useRef } from 'react';
+import { YjsProvider } from '../multiplayer/YjsProvider.js';
+import { SyncManager } from '../multiplayer/SyncManager.js';
+import { PresenceManager } from '../presence/PresenceManager.js';
+import { SceneGraph } from '../canvas/SceneGraph.js';
+import { useRoomStore } from '../store/useRoomStore.js';
+
+export const useMultiplayer = (roomId: string | null, sceneGraph: SceneGraph) => {
+  const { localUser } = useRoomStore();
+  const providerRef = useRef<YjsProvider | null>(null);
+  const syncManagerRef = useRef<SyncManager | null>(null);
+  const presenceManagerRef = useRef<PresenceManager | null>(null);
+
+  useEffect(() => {
+    if (!roomId || !localUser) return;
+
+    const provider = new YjsProvider(roomId);
+    providerRef.current = provider;
+
+    const syncManager = new SyncManager(provider.elements, sceneGraph);
+    syncManagerRef.current = syncManager;
+
+    const presenceManager = new PresenceManager(provider.awareness, roomId);
+    presenceManagerRef.current = presenceManager;
+
+    // Set initial user info
+    presenceManager.setUserInfo(localUser.name, localUser.color);
+
+    return () => {
+      provider.disconnect();
+      providerRef.current = null;
+      syncManagerRef.current = null;
+      presenceManagerRef.current = null;
+    };
+  }, [roomId, localUser, sceneGraph]);
+
+  return {
+    provider: providerRef.current,
+    syncManager: syncManagerRef.current,
+    presenceManager: presenceManagerRef.current,
+  };
+};
+
+
+apps/web/src/hooks/usePersistence.ts
+import { useEffect } from 'react';
+import { openDB } from 'idb';
+import { useShapeStore } from '../store/useShapeStore.js';
+import { useRoomStore } from '../store/useRoomStore.js';
+import { SceneGraph } from '../canvas/SceneGraph.js';
+
+const DB_NAME = 'canvasync-db';
+const STORE_NAME = 'local-canvas';
+
+export const usePersistence = (sceneGraph?: SceneGraph) => {
+  const elements = useShapeStore((state) => state.elements);
+  const roomId = useRoomStore((state) => state.roomId);
+
+  // Initialize and Load
+  useEffect(() => {
+    if (roomId) return; // Don't persist local shapes if in a room
+
+    const loadData = async () => {
+      try {
+        const db = await openDB(DB_NAME, 1, {
+          upgrade(db) {
+            db.createObjectStore(STORE_NAME);
+          },
+        });
+        const saved = await db.get(STORE_NAME, 'shapes');
+        if (saved && sceneGraph) {
+          sceneGraph.setShapes(saved); // write directly to sceneGraph
+        }
+      } catch (err) {
+        console.error('Failed to load from IndexedDB', err);
+      }
+    };
+
+    loadData();
+  }, [sceneGraph, roomId]);
+
+  // Autosave
+  useEffect(() => {
+    if (roomId || elements.length === 0) return;
+
+    const saveData = async () => {
+      try {
+        const db = await openDB(DB_NAME, 1);
+        await db.put(STORE_NAME, elements, 'shapes');
+      } catch (err) {
+        console.error('Failed to save to IndexedDB', err);
+      }
+    };
+
+    const timeout = setTimeout(saveData, 1000);
+    return () => clearTimeout(timeout);
+  }, [elements, roomId]);
+};
+
+
+apps/web/src/hooks/useResize.ts
+import { useEffect, RefObject } from 'react';
+
+export const useResize = (canvasRef: RefObject<HTMLCanvasElement>, onResize?: () => void) => {
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleResize = () => {
+      const parent = canvas.parentElement;
+      if (!parent) return;
+
+      const { width, height } = parent.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+
+      if (onResize) onResize();
+    };
+
+    const resizeObserver = new ResizeObserver(handleResize);
+    if (canvas.parentElement) {
+      resizeObserver.observe(canvas.parentElement);
+    }
+
+    handleResize();
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [canvasRef, onResize]);
+};
+
+
+apps/web/src/hooks/useTheme.ts
+import { useEffect } from 'react';
+import { useCanvasStore } from '../store/useCanvasStore.js';
+
+export const useTheme = () => {
+  const theme = useCanvasStore((state) => state.theme);
+  const setTheme = useCanvasStore((state) => state.setTheme);
+
+  // Sync store from localStorage on first mount
+  useEffect(() => {
+    const saved = localStorage.getItem('theme') as 'dark' | 'light' | null;
+    const preferred = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    setTheme(preferred);
+    document.documentElement.classList.toggle('dark', preferred === 'dark');
+  }, [setTheme]);
+
+  // When store changes (from AnimatedThemeToggler via localStorage), update CSS vars
+  useEffect(() => {
+    const isDark = theme === 'dark';
+    if (isDark) {
+      document.documentElement.style.setProperty('--bg-primary', '#111113');
+      document.documentElement.style.setProperty('--bg-secondary', '#18181b');
+      document.documentElement.style.setProperty('--bg-surface', '#1f1f23');
+      document.documentElement.style.setProperty('--bg-elevated', '#27272a');
+      document.documentElement.style.setProperty('--border', '#2e2e33');
+      document.documentElement.style.setProperty('--text-primary', '#fafafa');
+      document.documentElement.style.setProperty('--text-secondary', '#a1a1aa');
+      document.documentElement.style.setProperty('--text-muted', '#52525b');
+      document.documentElement.style.setProperty('--toolbar-bg', 'rgba(27, 27, 31, 0.90)');
+    } else {
+      document.documentElement.style.setProperty('--bg-primary', '#f4f4f5');
+      document.documentElement.style.setProperty('--bg-secondary', '#ffffff');
+      document.documentElement.style.setProperty('--bg-surface', '#e4e4e7');
+      document.documentElement.style.setProperty('--bg-elevated', '#d4d4d8');
+      document.documentElement.style.setProperty('--border', '#d1d5db');
+      document.documentElement.style.setProperty('--text-primary', '#09090b');
+      document.documentElement.style.setProperty('--text-secondary', '#71717a');
+      document.documentElement.style.setProperty('--text-muted', '#a1a1aa');
+      document.documentElement.style.setProperty('--toolbar-bg', 'rgba(255, 255, 255, 0.88)');
+    }
+  }, [theme]);
+
+  // Listen for class changes from AnimatedThemeToggler and sync store
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      const isDark = document.documentElement.classList.contains('dark');
+      setTheme(isDark ? 'dark' : 'light');
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, [setTheme]);
+
+  return { theme };
+};
+
+
+apps/web/src/main.tsx
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App.js';
+import './styles/globals.css';
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+
+apps/web/src/multiplayer/RoomManager.ts
+import { Shape } from '@canvasync/shared';
+import { useRoomStore } from '../store/useRoomStore.js';
+
+export class RoomManager {
+  private static BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+  static async createRoom(name?: string, initialElements?: Shape[]): Promise<string> {
+    const response = await fetch(`${this.BASE_URL}/rooms`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name,
+        // If initialElements are provided, we might want to send them
+        // Note: The current server implementation doesn't handle this in /rooms POST
+        // but it could be extended or handled via Yjs sync after joining.
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to create room');
+    }
+
+    const room = await response.json();
+    
+    // If we have initial elements, we could potentially push them via SyncManager
+    // or another API call. For now, we'll just return the room ID.
+    
+    return room.roomId;
+  }
+
+  static navigateToRoom(id: string, navigate: (path: string) => void) {
+    useRoomStore.getState().setRoomId(id);
+    navigate(`/room/${id}`);
+  }
+}
+
+
+apps/web/src/multiplayer/SyncManager.ts
+import * as Y from 'yjs';
+import { Shape } from '@canvasync/shared';
+import { SceneGraph } from '../canvas/SceneGraph';
+
+export class SyncManager {
+  private yElements: Y.Map<Shape>;
+  private sceneGraph: SceneGraph;
+  private isApplyingRemoteChange = false;
+
+  constructor(yElements: Y.Map<Shape>, sceneGraph: SceneGraph) {
+    this.yElements = yElements;
+    this.sceneGraph = sceneGraph;
+
+    // 1. Initial Sync: Yjs -> SceneGraph
+    this.syncRemoteToLocal();
+
+    // 2. Listen for remote changes
+    this.yElements.observe((event) => {
+      // Ignore local changes that we just sent to Yjs
+      if (event.transaction.local && event.transaction.origin !== 'db-load') return;
+      this.syncRemoteToLocal();
+    });
+
+    // 3. Listen for local changes
+    this.sceneGraph.subscribe(() => {
+      if (this.isApplyingRemoteChange) return;
+      this.syncLocalToRemote();
+    });
+  }
+
+  private syncRemoteToLocal() {
+    this.isApplyingRemoteChange = true;
+    try {
+      const shapes = Array.from(this.yElements.values());
+      // Sort by zIndex to preserve rendering order
+      const sortedShapes = [...shapes].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+      this.sceneGraph.setShapes(sortedShapes);
+    } finally {
+      this.isApplyingRemoteChange = false;
+    }
+  }
+
+  private syncLocalToRemote() {
+    const shapes = this.sceneGraph.getElements();
+    
+    this.yElements.doc?.transact(() => {
+      // Add or Update shapes in Yjs
+      shapes.forEach((shape: Shape) => {
+        const existing = this.yElements.get(shape.id);
+        // Basic deep equality check to avoid redundant updates
+        if (!existing || JSON.stringify(existing) !== JSON.stringify(shape)) {
+          this.yElements.set(shape.id, shape);
+        }
+      });
+
+      // Remove deleted shapes from Yjs
+      const currentIds = new Set(shapes.map((s: Shape) => s.id));
+      for (const id of this.yElements.keys()) {
+        if (!currentIds.has(id)) {
+          this.yElements.delete(id);
+        }
+      }
+    }, 'local-sync');
+  }
+}
+
+
+apps/web/src/multiplayer/YjsProvider.ts
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
+import { Shape } from '@canvasync/shared';
+
+export class YjsProvider {
+  public readonly doc: Y.Doc;
+  public readonly provider: WebsocketProvider;
+  public readonly elements: Y.Map<Shape>;
+
+  constructor(roomId: string) {
+    this.doc = new Y.Doc();
+    
+    // In Vite, we use import.meta.env for environment variables
+    const wsUrl = (import.meta.env.VITE_WS_URL as string) || 'ws://localhost:3001';
+    
+    // The WebsocketProvider expects the server URL, the room name, and the Y.Doc
+    // We append /room to the URL so it matches our Fastify route: /room/:roomId
+    this.provider = new WebsocketProvider(
+      `${wsUrl}/room`,
+      roomId,
+      this.doc
+    );
+
+    this.elements = this.doc.getMap<Shape>('elements');
+
+    this.provider.on('status', (event: any) => {
+      console.log(`WebSocket status for room ${roomId}: ${event.status}`);
+    });
+
+    this.provider.on('sync', (isSynced: boolean) => {
+      console.log(`Yjs synced for room ${roomId}: ${isSynced}`);
+    });
+  }
+
+  public get awareness() {
+    return this.provider.awareness;
+  }
+
+  public disconnect() {
+    this.provider.disconnect();
+    this.doc.destroy();
+  }
+}
+
+
+apps/web/src/pages/LocalCanvas.tsx
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useCanvasStore } from '../store/useCanvasStore.js';
+import { useShapeStore } from '../store/useShapeStore.js';
+import { useCanvas } from '../hooks/useCanvas.js';
+import { ToolName } from '@canvasync/shared';
+import { Toolbar } from '../ui/components/Toolbar.js';
+import { TopBar } from '../ui/components/TopBar.js';
+import { StylePanel } from '../ui/components/StylePanel.js';
+import { CreateRoomModal } from '../ui/components/CreateRoomModal.js';
+import { RoomManager } from '../multiplayer/RoomManager.js';
+import { useResize } from '../hooks/useResize.js';
+import { usePersistence } from '../hooks/usePersistence.js';
+
+const LocalCanvas: React.FC = () => {
+  const { canvasRef, sceneGraph } = useCanvas();
+  const activeTool = useCanvasStore((state) => state.activeTool);
+  const elements = useShapeStore((state) => state.elements);
+  const [showShare, setShowShare] = useState(false);
+  const [canvasName, setCanvasName] = useState('Untitled');
+  const navigate = useNavigate();
+
+  // Handle window resize to keep canvas full-screen
+  useResize(canvasRef);
+  
+  // Handle local persistence
+  usePersistence(sceneGraph);
+
+  const getCursorClass = () => {
+    switch (activeTool) {
+      case ToolName.SELECTION: return 'cursor-default';
+      case ToolName.PAN: return 'cursor-grab active:cursor-grabbing';
+      case ToolName.PEN: return 'cursor-pen'; // Defined in globals.css
+      case ToolName.ERASER: return 'cursor-eraser';
+      case ToolName.TEXT: return 'cursor-text';
+      default: return 'cursor-crosshair';
+    }
+  };
+
+  const handleCreateRoom = async ({ name, includeElements }: { name?: string; includeElements: boolean }) => {
+    try {
+      const roomId = await RoomManager.createRoom(name || canvasName, includeElements ? elements : []);
+      setShowShare(false);
+      RoomManager.navigateToRoom(roomId, navigate);
+    } catch (err) {
+      console.error('Failed to create room:', err);
+    }
+  };
+
+  return (
+    <div className={`relative w-screen h-screen overflow-hidden ${getCursorClass()}`} style={{ background: 'var(--bg-primary)' }}>
+      {/* UI Layers */}
+      <TopBar 
+        onShareClick={() => setShowShare(true)}
+        canvasName={canvasName}
+        onNameChange={setCanvasName}
+      />
+      <Toolbar />
+      <StylePanel sceneGraph={sceneGraph} />
+
+      {/* Main Canvas */}
+      <canvas
+        ref={canvasRef}
+        className="block w-full h-full touch-none"
+        style={{ marginTop: '44px', height: 'calc(100vh - 44px)' }}
+      />
+
+      {/* Modern Vignette / Edge Effect */}
+      <div className="pointer-events-none absolute inset-0 shadow-[inset_0_0_100px_rgba(0,0,0,0.2)] z-10" />
+
+      {showShare && (
+        <CreateRoomModal
+          onClose={() => setShowShare(false)}
+          onCreate={handleCreateRoom}
+        />
+      )}
+    </div>
+  );
+};
+
+export default LocalCanvas;
+
+
+apps/web/src/pages/RoomCanvas.tsx
+import React, { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { useCanvas } from '../hooks/useCanvas.js';
+import { useMultiplayer } from '../hooks/useMultiplayer.js';
+import { Toolbar } from '../ui/components/Toolbar.js';
+import { TopBar } from '../ui/components/TopBar.js';
+import { StylePanel } from '../ui/components/StylePanel.js';
+import { JoinRoomModal } from '../ui/components/JoinRoomModal.js';
+import { RoomPanel } from '../ui/components/RoomPanel.js';
+import { useResize } from '../hooks/useResize.js';
+import { useRoomStore } from '../store/useRoomStore.js';
+import { useCanvasStore } from '../store/useCanvasStore.js';
+import { ToolName } from '@canvasync/shared';
+
+const RoomCanvas: React.FC = () => {
+  const { id } = useParams<{ id: string }>();
+  const { canvasRef, sceneGraph } = useCanvas();
+  const { setRoomId, localUser, setLocalUser } = useRoomStore();
+  const activeTool = useCanvasStore((state) => state.activeTool);
+  const [showJoin, setShowJoin] = useState(!useRoomStore.getState().localUser);
+
+  useResize(canvasRef);
+  useMultiplayer(showJoin ? null : id ?? null, sceneGraph);
+
+  useEffect(() => {
+    if (id) setRoomId(id);
+    return () => setRoomId(null);
+  }, [id, setRoomId]);
+
+  const handleJoin = (name: string, color: string) => {
+    setLocalUser({ name, color });
+    setShowJoin(false);
+  };
+
+  const getCursorClass = () => {
+    switch (activeTool) {
+      case ToolName.PAN: return 'cursor-grab active:cursor-grabbing';
+      case ToolName.PEN: return 'cursor-pen';
+      case ToolName.ERASER: return 'cursor-eraser';
+      case ToolName.TEXT: return 'cursor-text';
+      default: return 'cursor-crosshair';
+    }
+  };
+
+  return (
+    <div className={`relative w-screen h-screen overflow-hidden ${getCursorClass()}`}
+      style={{ background: 'var(--bg-primary)' }}>
+      <TopBar />
+      <Toolbar />
+      <StylePanel sceneGraph={sceneGraph} />
+      <RoomPanel />
+
+      <canvas
+        ref={canvasRef}
+        className="block w-full h-full touch-none"
+        style={{ marginTop: '44px', height: 'calc(100vh - 44px)' }}
+      />
+
+      <div className="pointer-events-none absolute inset-0 shadow-[inset_0_0_100px_rgba(0,0,0,0.2)] z-10" />
+
+      {showJoin && <JoinRoomModal onJoin={handleJoin} />}
+    </div>
+  );
+};
+
+export default RoomCanvas;
+
+
+apps/web/src/presence/PresenceManager.ts
+import * as Y from 'yjs';
+import { useRoomStore } from '../store/useRoomStore.js';
+import { CursorState, AwarenessState } from '@canvasync/shared';
+
+export class PresenceManager {
+  private awareness: any; // Awareness from y-websocket
+  private roomId: string;
+
+  constructor(awareness: any, roomId: string) {
+    this.awareness = awareness;
+    this.roomId = roomId;
+    this.setupListeners();
+  }
+
+  private setupListeners() {
+    this.awareness.on('change', () => {
+      const states = this.awareness.getStates() as Map<number, AwarenessState>;
+      const collaborators = new Map<string, any>();
+
+      states.forEach((state, clientID) => {
+        if (clientID === this.awareness.clientID) return;
+        if (state.user) {
+          collaborators.set(clientID.toString(), {
+            ...state.user,
+            id: clientID.toString(),
+            cursor: state.cursor
+          });
+        }
+      });
+
+      useRoomStore.getState().setCollaborators(collaborators);
+    });
+  }
+
+  public updateCursor(x: number, y: number) {
+    this.awareness.setLocalStateField('cursor', { x, y });
+  }
+
+  public setUserInfo(name: string, color: string) {
+    this.awareness.setLocalStateField('user', { name, color });
+  }
+}
+
+
+apps/web/src/renderer/CursorRenderer.ts
+import { Camera } from '../canvas/Camera.js';
+
+export class CursorRenderer {
+  static draw(ctx: CanvasRenderingContext2D, collaborators: Map<string, any>, camera: Camera) {
+    collaborators.forEach((user) => {
+      if (!user.cursor) return;
+
+      const { x, y } = user.cursor;
+      const screenX = x * camera.zoom + camera.x;
+      const screenY = y * camera.zoom + camera.y;
+
+      // Draw cursor arrow
+      ctx.save();
+      ctx.translate(screenX, screenY);
+      
+      ctx.fillStyle = user.color || '#ff0000';
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, 15);
+      ctx.lineTo(4, 11);
+      ctx.lineTo(10, 11);
+      ctx.closePath();
+      ctx.fill();
+
+      // Draw name tag
+      ctx.font = '12px Geist, sans-serif';
+      const name = user.name || 'Anonymous';
+      const textWidth = ctx.measureText(name).width;
+      
+      ctx.fillStyle = user.color || '#ff0000';
+      ctx.fillRect(10, 15, textWidth + 10, 20);
+      
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(name, 15, 30);
+      
+      ctx.restore();
+    });
+  }
+}
+
+
+apps/web/src/renderer/GridRenderer.ts
+import { Camera } from '../canvas/Camera.js';
+
+export class GridRenderer {
+  private static readonly GRID_SIZE = 40;
+  private static readonly MAJOR_GRID = 200;
+
+  static render(ctx: CanvasRenderingContext2D, camera: Camera) {
+    const canvas = ctx.canvas;
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.width / dpr;
+    const H = canvas.height / dpr;
+
+    // Visible world bounds
+    const left   = -camera.x / camera.zoom;
+    const top    = -camera.y / camera.zoom;
+    const right  = (W - camera.x) / camera.zoom;
+    const bottom = (H - camera.y) / camera.zoom;
+
+    const minorSize = this.GRID_SIZE;
+    const majorSize = this.MAJOR_GRID;
+
+    // Detect theme
+    const isDark = document.documentElement.classList.contains('dark');
+    const minorColor = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)';
+    const majorColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.09)';
+
+    ctx.save();
+    ctx.lineWidth = 1 / camera.zoom;
+
+    // Minor grid lines
+    ctx.strokeStyle = minorColor;
+    ctx.beginPath();
+    const startX = Math.floor(left / minorSize) * minorSize;
+    const startY = Math.floor(top / minorSize) * minorSize;
+    for (let x = startX; x <= right; x += minorSize) {
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+    }
+    for (let y = startY; y <= bottom; y += minorSize) {
+      ctx.moveTo(left, y);
+      ctx.lineTo(right, y);
+    }
+    ctx.stroke();
+
+    // Major grid lines
+    ctx.strokeStyle = majorColor;
+    ctx.lineWidth = 1.5 / camera.zoom;
+    ctx.beginPath();
+    const mStartX = Math.floor(left / majorSize) * majorSize;
+    const mStartY = Math.floor(top / majorSize) * majorSize;
+    for (let x = mStartX; x <= right; x += majorSize) {
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+    }
+    for (let y = mStartY; y <= bottom; y += majorSize) {
+      ctx.moveTo(left, y);
+      ctx.lineTo(right, y);
+    }
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
+
+apps/web/src/renderer/Renderer.ts
+import { Camera } from '../canvas/Camera.js';
+import { SceneGraph } from '../canvas/SceneGraph.js';
+import { TransformUtils } from '../canvas/TransformUtils.js';
+import { GridRenderer } from './GridRenderer.js';
+import { ShapeRenderer } from './ShapeRenderer.js';
+import { CursorRenderer } from './CursorRenderer.js';
+
+import { SelectionRenderer } from './SelectionRenderer.js';
+import { useSelectionStore } from '../store/useSelectionStore.js';
+
+export class Renderer {
+  static render(
+    ctx: CanvasRenderingContext2D, 
+    sceneGraph: SceneGraph, 
+    camera: Camera,
+    collaborators: Map<string, any> = new Map()
+  ) {
+    const { selectedIds, selectionBox } = useSelectionStore.getState();
+    const elements = sceneGraph.getElements();
+
+    // Clear canvas using physical pixels
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    // Save state before camera transform
+    ctx.save();
+    
+    // Apply Camera Transform
+    TransformUtils.applyTransform(ctx, camera);
+
+    // Draw Grid (World Space)
+    GridRenderer.render(ctx, camera);
+
+    // Draw Shapes
+    for (const shape of elements) {
+      ShapeRenderer.draw(ctx, shape);
+    }
+
+    // Restore state (remove camera transform)
+    ctx.restore();
+
+    // Draw UI Overlays (World Space logic internal to SelectionRenderer)
+    SelectionRenderer.draw(ctx, selectedIds, elements, camera, selectionBox);
+
+    // Draw UI Overlays (Screen Space)
+    CursorRenderer.draw(ctx, collaborators, camera);
+    this.renderUI(ctx);
+  }
+
+  private static renderUI(_ctx: CanvasRenderingContext2D) {
+    // UI overlays like selection bounds, handles, etc. go here
+  }
+}
+
+
+apps/web/src/renderer/SelectionRenderer.ts
+import { Camera } from '../canvas/Camera.js';
+import { BoundingBox, Shape } from '@canvasync/shared';
+
+export class SelectionRenderer {
+  static draw(
+    ctx: CanvasRenderingContext2D,
+    selectedIds: Set<string>,
+    elements: Shape[],
+    camera: Camera,
+    selectionBox: BoundingBox | null
+  ) {
+    // 1. Draw the Rubber-band selection box (during drag-select)
+    if (selectionBox) {
+      ctx.save();
+      // Draw in world space
+      const dpr = window.devicePixelRatio || 1;
+      ctx.setTransform(camera.zoom * dpr, 0, 0, camera.zoom * dpr, camera.x * dpr, camera.y * dpr);
+
+      ctx.strokeStyle = '#6366f1';
+      ctx.lineWidth = 1 / camera.zoom;
+      ctx.fillStyle = 'rgba(99, 102, 241, 0.1)';
+      
+      ctx.beginPath();
+      ctx.rect(selectionBox.x, selectionBox.y, selectionBox.width, selectionBox.height);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    if (selectedIds.size === 0) return;
+
+    // 2. Draw Bounding Box and Handles for selected elements
+    const selectedElements = elements.filter(el => selectedIds.has(el.id));
+    if (selectedElements.length === 0) return;
+
+    // Calculate common bounding box
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    selectedElements.forEach(el => {
+      minX = Math.min(minX, el.x);
+      minY = Math.min(minY, el.y);
+      maxX = Math.max(maxX, el.x + (el.width || 0));
+      maxY = Math.max(maxY, el.y + (el.height || 0));
+    });
+
+    const padding = 4 / camera.zoom;
+    const boxX = minX - padding;
+    const boxY = minY - padding;
+    const boxW = (maxX - minX) + padding * 2;
+    const boxH = (maxY - minY) + padding * 2;
+
+    ctx.save();
+    // Apply camera transform to draw in world space
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(camera.zoom * dpr, 0, 0, camera.zoom * dpr, camera.x * dpr, camera.y * dpr);
+
+    // Main selection border
+    ctx.strokeStyle = '#6366f1';
+    ctx.lineWidth = 1.5 / camera.zoom;
+    ctx.setLineDash([]);
+    ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+    // Draw Handles (Corners and Midpoints)
+    const handleSize = 8 / camera.zoom;
+    const handles = [
+      { x: boxX, y: boxY }, // TL
+      { x: boxX + boxW / 2, y: boxY }, // TC
+      { x: boxX + boxW, y: boxY }, // TR
+      { x: boxX, y: boxY + boxH / 2 }, // ML
+      { x: boxX + boxW, y: boxY + boxH / 2 }, // MR
+      { x: boxX, y: boxY + boxH }, // BL
+      { x: boxX + boxW / 2, y: boxY + boxH }, // BC
+      { x: boxX + boxW, y: boxY + boxH }, // BR
+    ];
+
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#6366f1';
+    ctx.lineWidth = 1.5 / camera.zoom;
+
+    handles.forEach(h => {
+      ctx.beginPath();
+      ctx.rect(h.x - handleSize / 2, h.y - handleSize / 2, handleSize, handleSize);
+      ctx.fill();
+      ctx.stroke();
+    });
+
+    // Rotate handle — circle above top center
+    const rotateDist = 24 / camera.zoom;
+    const rotateHandleX = boxX + boxW / 2;
+    const rotateHandleY = boxY - rotateDist;
+    const rotateR = 5 / camera.zoom;
+
+    // Connecting line
+    ctx.beginPath();
+    ctx.strokeStyle = '#6366f1';
+    ctx.lineWidth = 1 / camera.zoom;
+    ctx.moveTo(boxX + boxW / 2, boxY);
+    ctx.lineTo(rotateHandleX, rotateHandleY);
+    ctx.stroke();
+
+    // Circle
+    ctx.beginPath();
+    ctx.arc(rotateHandleX, rotateHandleY, rotateR, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = '#6366f1';
+    ctx.lineWidth = 1.5 / camera.zoom;
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
+
+apps/web/src/renderer/ShapeRenderer.ts
+import { Shape } from '@canvasync/shared';
+import { RectangleRenderer } from './shapes/RectangleRenderer.js';
+import { EllipseRenderer } from './shapes/EllipseRenderer.js';
+import { PenRenderer } from './shapes/PenRenderer.js';
+import { TriangleRenderer } from './shapes/TriangleRenderer.js';
+import { RhombusRenderer } from './shapes/RhombusRenderer.js';
+import { LineRenderer } from './shapes/LineRenderer.js';
+import { ArrowRenderer } from './shapes/ArrowRenderer.js';
+import { TextRenderer } from './shapes/TextRenderer.js';
+
+export class ShapeRenderer {
+  static draw(ctx: CanvasRenderingContext2D, shape: Shape) {
+    ctx.save();
+    ctx.globalAlpha = shape.opacity ?? 1;
+
+    if (shape.type !== 'pen' && shape.type !== 'line' && shape.type !== 'arrow') {
+      const cx = shape.x + shape.width / 2;
+      const cy = shape.y + shape.height / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate(shape.rotation ?? 0);
+      ctx.translate(-cx, -cy);
+    }
+
+    switch (shape.type) {
+      case 'rectangle': RectangleRenderer.draw(ctx, shape as any); break;
+      case 'ellipse':   EllipseRenderer.draw(ctx, shape as any); break;
+      case 'pen':       PenRenderer.draw(ctx, shape as any); break;
+      case 'triangle':  TriangleRenderer.draw(ctx, shape as any); break;
+      case 'rhombus':   RhombusRenderer.draw(ctx, shape as any); break;
+      case 'line':      LineRenderer.draw(ctx, shape as any); break;
+      case 'arrow':     ArrowRenderer.draw(ctx, shape as any); break;
+      case 'text':      TextRenderer.draw(ctx, shape as any); break;
+      default:
+        console.warn('No renderer for:', (shape as any).type);
+    }
+
+    ctx.restore();
+  }
+}
+
+
+apps/web/src/renderer/shapes/ArrowRenderer.ts
+import { ArrowShape } from '@canvasync/shared';
+
+export class ArrowRenderer {
+  static draw(ctx: CanvasRenderingContext2D, shape: ArrowShape) {
+    if (!shape.points || shape.points.length < 2) return;
+    const [p1, p2] = shape.points;
+    ctx.strokeStyle = shape.strokeColor;
+    ctx.fillStyle = shape.strokeColor;
+    ctx.lineWidth = shape.strokeWidth;
+    ctx.lineCap = 'round';
+    if (shape.strokeStyle === 'dashed') ctx.setLineDash([10,5]);
+    else if (shape.strokeStyle === 'dotted') ctx.setLineDash([2,4]);
+    else ctx.setLineDash([]);
+
+    // Line
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+
+    // Arrowhead
+    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    const headLen = Math.max(12, shape.strokeWidth * 4);
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(p2.x, p2.y);
+    ctx.lineTo(p2.x - headLen * Math.cos(angle - Math.PI / 6), p2.y - headLen * Math.sin(angle - Math.PI / 6));
+    ctx.lineTo(p2.x - headLen * Math.cos(angle + Math.PI / 6), p2.y - headLen * Math.sin(angle + Math.PI / 6));
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+
+apps/web/src/renderer/shapes/EllipseRenderer.ts
+import { EllipseShape } from '@canvasync/shared';
+
+export class EllipseRenderer {
+  static draw(ctx: CanvasRenderingContext2D, shape: EllipseShape) {
+    ctx.beginPath();
+    
+    const { x, y, width, height, strokeColor, fillColor, strokeWidth, strokeStyle } = shape;
+    
+    // Set styles
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = strokeWidth;
+    ctx.fillStyle = fillColor;
+
+    if (strokeStyle === 'dashed') {
+      ctx.setLineDash([10, 5]);
+    } else if (strokeStyle === 'dotted') {
+      ctx.setLineDash([2, 2]);
+    } else {
+      ctx.setLineDash([]);
+    }
+
+    const centerX = x + width / 2;
+    const centerY = y + height / 2;
+    const radiusX = Math.abs(width / 2);
+    const radiusY = Math.abs(height / 2);
+
+    ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, 2 * Math.PI);
+
+    if (fillColor !== 'transparent') {
+      ctx.fill();
+    }
+    
+    if (strokeWidth > 0) {
+      ctx.stroke();
+    }
+  }
+}
+
+
+apps/web/src/renderer/shapes/LineRenderer.ts
+import { LineShape } from '@canvasync/shared';
+
+export class LineRenderer {
+  static draw(ctx: CanvasRenderingContext2D, shape: LineShape) {
+    if (!shape.points || shape.points.length < 2) return;
+    const [p1, p2] = shape.points;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.strokeStyle = shape.strokeColor;
+    ctx.lineWidth = shape.strokeWidth;
+    ctx.lineCap = 'round';
+    if (shape.strokeStyle === 'dashed') ctx.setLineDash([10,5]);
+    else if (shape.strokeStyle === 'dotted') ctx.setLineDash([2,4]);
+    else ctx.setLineDash([]);
+    ctx.stroke();
+  }
+}
+
+
+apps/web/src/renderer/shapes/PenRenderer.ts
+import { PenShape } from '@canvasync/shared';
+
+export class PenRenderer {
+  static draw(ctx: CanvasRenderingContext2D, shape: PenShape) {
+    if (shape.points.length < 2) return;
+
+    ctx.beginPath();
+    
+    const { strokeColor, strokeWidth, strokeStyle, points } = shape;
+    
+    // Set styles
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = strokeWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    if (strokeStyle === 'dashed') {
+      ctx.setLineDash([10, 5]);
+    } else if (strokeStyle === 'dotted') {
+      ctx.setLineDash([2, 2]);
+    } else {
+      ctx.setLineDash([]);
+    }
+
+    ctx.moveTo(points[0].x, points[0].y);
+
+    if (points.length === 2) {
+      ctx.lineTo(points[1].x, points[1].y);
+    } else {
+      for (let i = 1; i < points.length - 2; i++) {
+        const xc = (points[i].x + points[i + 1].x) / 2;
+        const yc = (points[i].y + points[i + 1].y) / 2;
+        ctx.quadraticCurveTo(points[i].x, points[i].y, xc, yc);
+      }
+      
+      // For the last 2 points
+      ctx.quadraticCurveTo(
+        points[points.length - 2].x,
+        points[points.length - 2].y,
+        points[points.length - 1].x,
+        points[points.length - 1].y
+      );
+    }
+
+    ctx.stroke();
+  }
+}
+
+
+apps/web/src/renderer/shapes/RectangleRenderer.ts
+import { RectangleShape } from '@canvasync/shared';
+
+export class RectangleRenderer {
+  static draw(ctx: CanvasRenderingContext2D, shape: RectangleShape) {
+    ctx.beginPath();
+    
+    const { x, y, width, height, cornerRadius, strokeColor, fillColor, strokeWidth, strokeStyle } = shape;
+    
+    // Set styles
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = strokeWidth;
+    ctx.fillStyle = fillColor;
+
+    if (strokeStyle === 'dashed') {
+      ctx.setLineDash([10, 5]);
+    } else if (strokeStyle === 'dotted') {
+      ctx.setLineDash([2, 2]);
+    } else {
+      ctx.setLineDash([]);
+    }
+
+    if (cornerRadius > 0) {
+      ctx.roundRect(x, y, width, height, cornerRadius);
+    } else {
+      ctx.rect(x, y, width, height);
+    }
+
+    if (fillColor !== 'transparent') {
+      ctx.fill();
+    }
+    
+    if (strokeWidth > 0) {
+      ctx.stroke();
+    }
+  }
+}
+
+
+apps/web/src/renderer/shapes/RhombusRenderer.ts
+import { RhombusShape } from '@canvasync/shared';
+
+export class RhombusRenderer {
+  static draw(ctx: CanvasRenderingContext2D, shape: RhombusShape) {
+    const { x, y, width, height, strokeColor, fillColor, strokeWidth, strokeStyle } = shape;
+    ctx.beginPath();
+    ctx.moveTo(x + width / 2, y);
+    ctx.lineTo(x + width, y + height / 2);
+    ctx.lineTo(x + width / 2, y + height);
+    ctx.lineTo(x, y + height / 2);
+    ctx.closePath();
+    ctx.strokeStyle = strokeColor; ctx.lineWidth = strokeWidth;
+    if (strokeStyle === 'dashed') ctx.setLineDash([10,5]);
+    else if (strokeStyle === 'dotted') ctx.setLineDash([2,4]);
+    else ctx.setLineDash([]);
+    if (fillColor !== 'transparent') { ctx.fillStyle = fillColor; ctx.fill(); }
+    ctx.stroke();
+  }
+}
+
+
+apps/web/src/renderer/shapes/TextRenderer.ts
+import { TextShape } from '@canvasync/shared';
+
+export class TextRenderer {
+  static draw(ctx: CanvasRenderingContext2D, shape: TextShape) {
+    if (!shape.content) return;
+    ctx.font = `${shape.fontSize || 20}px Inter, sans-serif`;
+    ctx.fillStyle = shape.textColor || shape.strokeColor;
+    ctx.textAlign = (shape.textAlign as CanvasTextAlign) || 'left';
+    ctx.textBaseline = 'top';
+    const lines = shape.content.split('\n');
+    lines.forEach((line, i) => {
+      ctx.fillText(line, shape.x, shape.y + i * ((shape.fontSize || 20) * 1.4));
+    });
+  }
+}
+
+
+apps/web/src/renderer/shapes/TriangleRenderer.ts
+import { TriangleShape } from '@canvasync/shared';
+
+export class TriangleRenderer {
+  static draw(ctx: CanvasRenderingContext2D, shape: TriangleShape) {
+    const { x, y, width, height, strokeColor, fillColor, strokeWidth, strokeStyle } = shape;
+    ctx.beginPath();
+    ctx.moveTo(x + width / 2, y);
+    ctx.lineTo(x + width, y + height);
+    ctx.lineTo(x, y + height);
+    ctx.closePath();
+    applyStroke(ctx, strokeColor, strokeWidth, strokeStyle);
+    if (fillColor !== 'transparent') { ctx.fillStyle = fillColor; ctx.fill(); }
+    ctx.stroke();
+  }
+}
+
+function applyStroke(ctx: CanvasRenderingContext2D, color: string, width: number, style: string) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (style === 'dashed') ctx.setLineDash([10, 5]);
+  else if (style === 'dotted') ctx.setLineDash([2, 4]);
+  else ctx.setLineDash([]);
+}
+
+
+apps/web/src/shapes/ShapeFactory.ts
+import { nanoid } from 'nanoid';
+import { 
+  Shape, 
+  ShapeType, 
+  Point, 
+  StrokeStyle 
+} from '@canvasync/shared';
+import {
+  DEFAULT_STROKE_COLOR,
+  DEFAULT_FILL_COLOR,
+  DEFAULT_STROKE_WIDTH,
+  DEFAULT_STROKE_STYLE,
+  DEFAULT_OPACITY,
+  DEFAULT_CORNER_RADIUS,
+} from '@canvasync/shared';
+
+export interface ShapeStyles {
+  strokeColor?: string;
+  fillColor?: string;
+  strokeWidth?: number;
+  strokeStyle?: StrokeStyle;
+  opacity?: number;
+}
+
+export class ShapeFactory {
+  static createShape(
+    type: ShapeType, 
+    x: number, 
+    y: number, 
+    styles: ShapeStyles = {}
+  ): Shape {
+    const base = {
+      id: nanoid(),
+      x,
+      y,
+      width: 0,
+      height: 0,
+      rotation: 0,
+      strokeColor: styles.strokeColor ?? DEFAULT_STROKE_COLOR,
+      fillColor: styles.fillColor ?? DEFAULT_FILL_COLOR,
+      strokeWidth: styles.strokeWidth ?? DEFAULT_STROKE_WIDTH,
+      strokeStyle: styles.strokeStyle ?? DEFAULT_STROKE_STYLE,
+      opacity: styles.opacity ?? DEFAULT_OPACITY,
+      zIndex: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    switch (type) {
+      case 'rectangle':
+        return {
+          ...base,
+          type: 'rectangle',
+          cornerRadius: DEFAULT_CORNER_RADIUS,
+        };
+      case 'ellipse':
+        return {
+          ...base,
+          type: 'ellipse',
+        };
+      case 'pen':
+        return {
+          ...base,
+          type: 'pen',
+          points: [{ x, y }],
+        };
+      case 'line':
+        return {
+          ...base,
+          type: 'line',
+          points: [{ x, y }, { x, y }],
+        };
+      case 'triangle':
+        return { ...base, type: 'triangle' };
+      case 'rhombus':
+        return { ...base, type: 'rhombus' };
+      case 'arrow':
+        return { 
+          ...base, 
+          type: 'arrow', 
+          points: [{ x, y }, { x, y }],
+          arrowHead: 'arrow'
+        };
+      case 'text':
+        return {
+          ...base,
+          type: 'text',
+          content: '',
+          fontSize: 20,
+          fontFamily: 'Arial',
+          textAlign: 'left',
+          textColor: base.strokeColor
+        };
+      default:
+        throw new Error(`Unsupported shape type: ${type}`);
+    }
+  }
+}
+
+
+apps/web/src/store/useCanvasStore.ts
+import { create } from 'zustand';
+import { ToolName } from '@canvasync/shared';
+
+interface Camera {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+interface CanvasState {
+  activeTool: ToolName;
+  theme: 'dark' | 'light';
+  camera: Camera;
+  isSpacebarHeld: boolean;
+  
+  setActiveTool: (tool: ToolName) => void;
+  setTheme: (theme: 'dark' | 'light') => void;
+  updateCamera: (camera: Partial<Camera>) => void;
+  setSpacebarHeld: (held: boolean) => void;
+}
+
+export const useCanvasStore = create<CanvasState>((set) => ({
+  activeTool: ToolName.SELECTION,
+  theme: 'light',
+  camera: { x: 0, y: 0, zoom: 1 },
+  isSpacebarHeld: false,
+
+  setActiveTool: (tool) => set({ activeTool: tool }),
+  setTheme: (theme) => set({ theme }),
+  updateCamera: (cameraUpdate) =>
+    set((state) => ({
+      camera: { ...state.camera, ...cameraUpdate },
+    })),
+  setSpacebarHeld: (held) => set({ isSpacebarHeld: held }),
+}));
+
+
+apps/web/src/store/useRoomStore.ts
+import { create } from 'zustand';
+import { AwarenessState } from '@canvasync/shared';
+
+interface RoomState {
+  roomId: string | null;
+  collaborators: Map<string, AwarenessState>;
+  presentationMode: boolean;
+  localUser: { name: string; color: string } | null;
+  
+  setRoomId: (id: string | null) => void;
+  setCollaborators: (collaborators: Map<string, AwarenessState>) => void;
+  updateCollaborator: (id: string, presence: AwarenessState) => void;
+  removeCollaborator: (id: string) => void;
+  setPresentationMode: (mode: boolean) => void;
+  setLocalUser: (user: { name: string; color: string } | null) => void;
+}
+
+export const useRoomStore = create<RoomState>((set) => ({
+  roomId: null,
+  collaborators: new Map(),
+  presentationMode: false,
+  localUser: null,
+
+  setRoomId: (roomId) => set({ roomId }),
+  
+  setCollaborators: (collaborators) => set({ collaborators }),
+
+  updateCollaborator: (id, presence) =>
+    set((state) => {
+      const newCollaborators = new Map(state.collaborators);
+      newCollaborators.set(id, presence);
+      return { collaborators: newCollaborators };
+    }),
+
+  removeCollaborator: (id) =>
+    set((state) => {
+      const newCollaborators = new Map(state.collaborators);
+      newCollaborators.delete(id);
+      return { collaborators: newCollaborators };
+    }),
+
+  setPresentationMode: (presentationMode) => set({ presentationMode }),
+
+  setLocalUser: (localUser) => set({ localUser }),
+}));
+
+
+apps/web/src/store/useSelectionStore.ts
+import { create } from 'zustand';
+import { BoundingBox } from '@canvasync/shared';
+
+interface SelectionState {
+  selectedIds: Set<string>;
+  selectionBox: BoundingBox | null;
+  
+  setSelectedIds: (ids: string[] | Set<string>) => void;
+  setSelectionBox: (box: BoundingBox | null) => void;
+  clearSelection: () => void;
+}
+
+export const useSelectionStore = create<SelectionState>((set) => ({
+  selectedIds: new Set(),
+  selectionBox: null,
+
+  setSelectedIds: (ids) =>
+    set({
+      selectedIds: ids instanceof Set ? ids : new Set(ids),
+    }),
+
+  setSelectionBox: (box) => set({ selectionBox: box }),
+
+  clearSelection: () => set({ selectedIds: new Set(), selectionBox: null }),
+}));
+
+
+apps/web/src/store/useShapeStore.ts
+import { create } from 'zustand';
+import { Shape } from '@canvasync/shared';
+import { nanoid } from 'nanoid';
+
+interface ShapeState {
+  elements: Shape[];
+  
+  addShape: (shape: Shape) => void;
+  updateShape: (id: string, updates: Partial<Shape>) => void;
+  removeShape: (id: string) => void;
+  duplicateShape: (id: string) => void;
+  setElements: (elements: Shape[]) => void;
+}
+
+export const useShapeStore = create<ShapeState>((set) => ({
+  elements: [],
+
+  addShape: (shape) =>
+    set((state) => ({
+      elements: [...state.elements, shape],
+    })),
+
+  updateShape: (id, updates) =>
+    set((state) => ({
+      elements: state.elements.map((el) =>
+        el.id === id ? { ...el, ...updates } as Shape : el
+      ),
+    })),
+
+  removeShape: (id) =>
+    set((state) => ({
+      elements: state.elements.filter((el) => el.id !== id),
+    })),
+
+  duplicateShape: (id: string) =>
+    set((state) => {
+      const shape = state.elements.find((e) => e.id === id);
+      if (!shape) return state;
+      const copy = { ...shape, id: nanoid(), x: shape.x + 20, y: shape.y + 20, createdAt: Date.now(), updatedAt: Date.now() };
+      return { elements: [...state.elements, copy as Shape] };
+    }),
+
+  setElements: (elements) => set({ elements }),
+}));
+
+
+apps/web/src/store/useStyleStore.ts
+import { create } from 'zustand';
+import { StrokeStyle, ToolName } from '@canvasync/shared';
+import * as DEFAULTS from '@canvasync/shared';
+
+interface StyleState {
+  strokeColor: string;
+  fillColor: string;
+  strokeWidth: number;
+  opacity: number;
+  strokeStyle: StrokeStyle;
+  
+  setStrokeColor: (color: string) => void;
+  setFillColor: (color: string) => void;
+  setStrokeWidth: (width: number) => void;
+  setOpacity: (opacity: number) => void;
+  setStrokeStyle: (style: StrokeStyle) => void;
+}
+
+export const useStyleStore = create<StyleState>((set) => ({
+  strokeColor: DEFAULTS.DEFAULT_STROKE_COLOR,
+  fillColor: DEFAULTS.DEFAULT_FILL_COLOR,
+  strokeWidth: DEFAULTS.DEFAULT_STROKE_WIDTH,
+  opacity: DEFAULTS.DEFAULT_OPACITY,
+  strokeStyle: DEFAULTS.DEFAULT_STROKE_STYLE,
+
+  setStrokeColor: (strokeColor) => set({ strokeColor }),
+  setFillColor: (fillColor) => set({ fillColor }),
+  setStrokeWidth: (strokeWidth) => set({ strokeWidth }),
+  setOpacity: (opacity) => set({ opacity }),
+  setStrokeStyle: (strokeStyle) => set({ strokeStyle }),
+}));
+
+
+apps/web/src/styles/globals.css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@layer base {
+  :root {
+    --bg-primary: #f4f4f5;
+    --bg-secondary: #ffffff;
+    --bg-surface: #e4e4e7;
+    --bg-elevated: #d4d4d8;
+    --border: #d1d5db;
+    --text-primary: #09090b;
+    --text-secondary: #71717a;
+    --text-muted: #a1a1aa;
+    --accent: #6366f1;
+    --accent-hover: #4f46e5;
+    --accent-glow: rgba(99, 102, 241, 0.2);
+    --destructive: #ef4444;
+    --success: #22c55e;
+    --radius: 10px;
+    --toolbar-bg: rgba(255, 255, 255, 0.88);
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.08);
+    --shadow-lg: 0 12px 40px rgba(0,0,0,0.14), 0 4px 16px rgba(0,0,0,0.10);
+  }
+
+  .dark {
+    --bg-primary: #111113;
+    --bg-secondary: #18181b;
+    --bg-surface: #1f1f23;
+    --bg-elevated: #27272a;
+    --border: #2e2e33;
+    --text-primary: #fafafa;
+    --text-secondary: #a1a1aa;
+    --text-muted: #52525b;
+    --accent: #6366f1;
+    --accent-hover: #4f46e5;
+    --accent-glow: rgba(99, 102, 241, 0.25);
+    --destructive: #ef4444;
+    --success: #22c55e;
+    --toolbar-bg: rgba(27, 27, 31, 0.90);
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.3);
+    --shadow-lg: 0 12px 40px rgba(0,0,0,0.5), 0 4px 16px rgba(0,0,0,0.4);
+  }
+
+  * {
+    box-sizing: border-box;
+    border-color: var(--border);
+  }
+
+  body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    margin: 0;
+    padding: 0;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  canvas {
+    touch-action: none;
+    display: block;
+  }
+}
+
+@layer utilities {
+  /* Scrollbar hiding */
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Glass morphism panel */
+  .glass {
+    background: var(--toolbar-bg);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid var(--border);
+  }
+
+  /* Tool cursors — SVG data URIs with CORRECT hotspot at tip */
+  .cursor-pen {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath d='M6 26 L8 18 L20 6 L26 12 L14 24 Z' fill='%23ffffff' stroke='%23000000' stroke-width='1.5'/%3E%3Cpath d='M6 26 L8 18 L14 24 Z' fill='%23cccccc'/%3E%3Ccircle cx='20' cy='6' r='2' fill='%236366f1'/%3E%3C/svg%3E") 2 30, crosshair;
+  }
+
+  .cursor-eraser {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Crect x='3' y='10' width='18' height='10' rx='2' fill='%23ffffff' stroke='%23666' stroke-width='1.5'/%3E%3Crect x='3' y='10' width='8' height='10' rx='2' fill='%23ff6b6b' stroke='%23666' stroke-width='1.5'/%3E%3C/svg%3E") 3 22, cell;
+  }
+
+  .cursor-crosshair { cursor: crosshair; }
+  .cursor-grab { cursor: grab; }
+  .cursor-grabbing { cursor: grabbing !important; }
+  .cursor-text { cursor: text; }
+  .cursor-default { cursor: default; }
+  .cursor-move { cursor: move; }
+  .cursor-nwse-resize { cursor: nwse-resize; }
+  .cursor-nesw-resize { cursor: nesw-resize; }
+  .cursor-ns-resize { cursor: ns-resize; }
+  .cursor-ew-resize { cursor: ew-resize; }
+}
+
+/* MagicUI View Transition for Theme Toggle */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+html[data-magicui-theme-vt="active"]::view-transition-group(root) {
+  animation-duration: var(--magicui-theme-toggle-vt-duration);
+}
+
+/* Animate-in utilities (Tailwind plugin alternative) */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slideInFromRight {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInFromLeft {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInFromBottom {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.animate-fade-in { animation: fadeIn 0.2s ease forwards; }
+.animate-slide-right { animation: slideInFromRight 0.25s cubic-bezier(0.16,1,0.3,1) forwards; }
+.animate-slide-left { animation: slideInFromLeft 0.25s cubic-bezier(0.16,1,0.3,1) forwards; }
+.animate-slide-bottom { animation: slideInFromBottom 0.2s cubic-bezier(0.16,1,0.3,1) forwards; }
+.animate-scale-in { animation: scaleIn 0.2s cubic-bezier(0.16,1,0.3,1) forwards; }
+
+
+apps/web/src/tools/ArrowTool.ts
+import { BaseTool, ToolEvent } from './BaseTool.js';
+import { ShapeFactory } from '../shapes/ShapeFactory.js';
+import { ArrowShape } from '@canvasync/shared';
+
+export class ArrowTool extends BaseTool {
+  private shape: ArrowShape | null = null;
+  private startX = 0;
+  private startY = 0;
+
+  onPointerDown(e: ToolEvent) {
+    const { worldX, worldY, sceneGraph, styleStore } = e;
+    this.startX = worldX;
+    this.startY = worldY;
+    const styles = styleStore.getState();
+    this.shape = ShapeFactory.createShape('arrow', worldX, worldY, styles) as ArrowShape;
+    this.shape.points = [{ x: worldX, y: worldY }, { x: worldX, y: worldY }];
+    sceneGraph.add(this.shape);
+  }
+
+  onPointerMove(e: ToolEvent) {
+    if (!this.shape) return;
+    let endX = e.worldX;
+    let endY = e.worldY;
+    if (e.shiftKey) {
+      const dx = endX - this.startX;
+      const dy = endY - this.startY;
+      const angle = Math.atan2(dy, dx);
+      const snapAngles = [0, Math.PI/4, Math.PI/2, 3*Math.PI/4, Math.PI, -3*Math.PI/4, -Math.PI/2, -Math.PI/4];
+      const snapped = snapAngles.reduce((best, a) => 
+        Math.abs(angle - a) < Math.abs(angle - best) ? a : best
+      , snapAngles[0]);
+      const dist = Math.hypot(dx, dy);
+      endX = this.startX + Math.cos(snapped) * dist;
+      endY = this.startY + Math.sin(snapped) * dist;
+    }
+    e.sceneGraph.update(this.shape.id, {
+      x: Math.min(this.startX, endX),
+      y: Math.min(this.startY, endY),
+      width: Math.abs(endX - this.startX),
+      height: Math.abs(endY - this.startY),
+      points: [{ x: this.startX, y: this.startY }, { x: endX, y: endY }],
+    });
+    this.engine.render();
+  }
+
+  onPointerUp(e: ToolEvent) {
+    if (this.shape) {
+      const pts = this.shape.points!;
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      if (dist < 3) {
+        e.sceneGraph.remove(this.shape.id);
+      }
+    }
+    this.shape = null;
+    this.engine.render();
+  }
+}
+
+
+apps/web/src/tools/BaseTool.ts
+import { CanvasEngine } from '../canvas/CanvasEngine.js';
+
+import { SceneGraph } from '../canvas/SceneGraph.js';
+
+export interface ToolEvent {
+  worldX: number;
+  worldY: number;
+  screenX: number;
+  screenY: number;
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  pressure: number;
+  sceneGraph: SceneGraph;
+  selectionStore: any;
+  canvasStore: any;
+  styleStore: any;
+}
+
+export abstract class BaseTool {
+  constructor(protected engine: CanvasEngine) {}
+
+  abstract onPointerDown(e: ToolEvent): void;
+  abstract onPointerMove(e: ToolEvent): void;
+  abstract onPointerUp(e: ToolEvent): void;
+  
+  onKeyDown(e: KeyboardEvent): void {}
+  onKeyUp(e: KeyboardEvent): void {}
+
+  // Lifecycle methods
+  activate(): void {}
+  deactivate(): void {}
+}
+
+
+apps/web/src/tools/EllipseTool.ts
+import { ShapeTool } from './ShapeTool.js';
+import { ShapeType } from '@canvasync/shared';
+
+export class EllipseTool extends ShapeTool {
+  protected shapeType: ShapeType = 'ellipse';
+}
+
+
+apps/web/src/tools/EraserTool.ts
+import { BaseTool, ToolEvent } from './BaseTool.js';
+import { Shape } from '@canvasync/shared';
+import { HitDetection } from '../canvas/HitDetection.js';
+
+export class EraserTool extends BaseTool {
+  private erasing = false;
+
+  onPointerDown(e: ToolEvent) {
+    this.erasing = true;
+    this.erase(e);
+  }
+
+  onPointerMove(e: ToolEvent) {
+    if (this.erasing) {
+      this.erase(e);
+    }
+  }
+
+  onPointerUp(_e: ToolEvent) {
+    this.erasing = false;
+  }
+
+  private erase(e: ToolEvent) {
+    const { worldX, worldY, sceneGraph } = e;
+    const toRemove = sceneGraph.getElements().filter((s: Shape) =>
+      HitDetection.isPointInShape({ x: worldX, y: worldY }, s)
+    );
+    toRemove.forEach((s: Shape) => sceneGraph.remove(s.id));
+    if (toRemove.length > 0) {
+      this.engine.render();
+    }
+  }
+}
+
+
+apps/web/src/tools/LineTool.ts
+import { BaseTool, ToolEvent } from './BaseTool.js';
+import { ShapeFactory } from '../shapes/ShapeFactory.js';
+import { LineShape } from '@canvasync/shared';
+
+export class LineTool extends BaseTool {
+  private shape: LineShape | null = null;
+  private startX = 0;
+  private startY = 0;
+
+  onPointerDown(e: ToolEvent) {
+    const { worldX, worldY, sceneGraph, styleStore } = e;
+    this.startX = worldX;
+    this.startY = worldY;
+    const styles = styleStore.getState();
+    this.shape = ShapeFactory.createShape('line', worldX, worldY, styles) as LineShape;
+    this.shape.points = [{ x: worldX, y: worldY }, { x: worldX, y: worldY }];
+    sceneGraph.add(this.shape);
+  }
+
+  onPointerMove(e: ToolEvent) {
+    if (!this.shape) return;
+    let endX = e.worldX;
+    let endY = e.worldY;
+    // SHIFT = snap to 45° increments
+    if (e.shiftKey) {
+      const dx = endX - this.startX;
+      const dy = endY - this.startY;
+      // Snap to nearest 45° but PREFER 0/90/180/270
+      const angle = Math.atan2(dy, dx);
+      const snapAngles = [0, Math.PI/4, Math.PI/2, 3*Math.PI/4, Math.PI, -3*Math.PI/4, -Math.PI/2, -Math.PI/4];
+      const snapped = snapAngles.reduce((best, a) => 
+        Math.abs(angle - a) < Math.abs(angle - best) ? a : best
+      , snapAngles[0]);
+      const dist = Math.hypot(dx, dy);
+      endX = this.startX + Math.cos(snapped) * dist;
+      endY = this.startY + Math.sin(snapped) * dist;
+    }
+    e.sceneGraph.update(this.shape.id, {
+      x: Math.min(this.startX, endX),
+      y: Math.min(this.startY, endY),
+      width: Math.abs(endX - this.startX),
+      height: Math.abs(endY - this.startY),
+      points: [{ x: this.startX, y: this.startY }, { x: endX, y: endY }],
+    });
+    this.engine.render();
+  }
+
+  onPointerUp(e: ToolEvent) {
+    if (this.shape) {
+      const pts = this.shape.points!;
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      if (dist < 3) {  // Remove only if too short, use distance not width/height
+        e.sceneGraph.remove(this.shape.id);
+      }
+    }
+    this.shape = null;
+    this.engine.render();
+  }
+}
+
+
+apps/web/src/tools/PanTool.ts
+import { BaseTool, ToolEvent } from './BaseTool.js';
+import { useCanvasStore } from '../store/useCanvasStore.js';
+
+export class PanTool extends BaseTool {
+  private isPanning = false;
+  private lastScreen = { x: 0, y: 0 };
+
+  onPointerDown(e: ToolEvent) {
+    this.isPanning = true;
+    this.lastScreen = { x: e.screenX, y: e.screenY };
+  }
+
+  onPointerMove(e: ToolEvent) {
+    if (!this.isPanning) return;
+    const dx = e.screenX - this.lastScreen.x;
+    const dy = e.screenY - this.lastScreen.y;
+    this.lastScreen = { x: e.screenX, y: e.screenY };
+
+    const camera = this.engine.getCamera();
+    camera.panBy(dx, dy);
+    useCanvasStore.getState().updateCamera({ x: camera.x, y: camera.y, zoom: camera.zoom });
+    this.engine.render();
+  }
+
+  onPointerUp(_e: ToolEvent) {
+    this.isPanning = false;
+  }
+}
+
+
+apps/web/src/tools/PenTool.ts
+import { BaseTool, ToolEvent } from './BaseTool.js';
+import { PenShape, Point } from '@canvasync/shared';
+import { ShapeFactory } from '../shapes/ShapeFactory.js';
+
+export class PenTool extends BaseTool {
+  private currentShape: PenShape | null = null;
+
+  onPointerDown(e: ToolEvent): void {
+    const { worldX, worldY, sceneGraph, styleStore } = e;
+    const { strokeColor, strokeWidth, strokeStyle, opacity } = styleStore.getState();
+    this.currentShape = ShapeFactory.createShape('pen', worldX, worldY, {
+      strokeColor,
+      strokeWidth,
+      strokeStyle,
+      opacity,
+    }) as PenShape;
+    sceneGraph.add(this.currentShape);
+    this.engine.render();
+  }
+
+  onPointerMove(e: ToolEvent): void {
+    const { worldX, worldY, sceneGraph } = e;
+    if (!this.currentShape) return;
+
+    this.currentShape.points.push({ x: worldX, y: worldY });
+    
+    // Trigger re-render by updating the shape in the scene graph
+    sceneGraph.update(this.currentShape.id, {
+      points: [...this.currentShape.points],
+    });
+    this.engine.render();
+  }
+
+  onPointerUp(e: ToolEvent): void {
+    if (!this.currentShape) return;
+
+    const sceneGraph = e.sceneGraph;
+    if (this.currentShape.points.length < 2) {
+      sceneGraph.remove(this.currentShape.id);
+    } else {
+      // Finalize - calculate actual bounding box
+      const points = this.currentShape.points;
+      const minX = Math.min(...points.map(p => p.x));
+      const minY = Math.min(...points.map(p => p.y));
+      const maxX = Math.max(...points.map(p => p.x));
+      const maxY = Math.max(...points.map(p => p.y));
+
+      sceneGraph.update(this.currentShape.id, {
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+        points: this.currentShape.points,
+        updatedAt: Date.now()
+      });
+    }
+
+    this.currentShape = null;
+    this.engine.render();
+  }
+}
+
+
+apps/web/src/tools/RectangleTool.ts
+import { ShapeTool } from './ShapeTool.js';
+import { ShapeType } from '@canvasync/shared';
+
+export class RectangleTool extends ShapeTool {
+  protected shapeType: ShapeType = 'rectangle';
+}
+
+
+apps/web/src/tools/RhombusTool.ts
+import { ShapeTool } from './ShapeTool.js';
+import { ShapeType } from '@canvasync/shared';
+
+export class RhombusTool extends ShapeTool {
+  protected shapeType: ShapeType = 'rhombus';
+}
+
+
+apps/web/src/tools/SelectionTool.ts
+import { BaseTool, ToolEvent } from './BaseTool.js';
+import { ToolName, Shape } from '@canvasync/shared';
+import { HitDetection } from '../canvas/HitDetection.js';
+
+type Handle = 'tl'|'tc'|'tr'|'ml'|'mr'|'bl'|'bc'|'br';
+
+export class SelectionTool extends BaseTool {
+  name = ToolName.SELECTION;
+
+  private mode: 'idle' | 'moving' | 'rubber-band' | 'resizing' = 'idle';
+  private dragStart = { x: 0, y: 0 };
+  private initialPositions: Map<string, { x: number; y: number; w: number; h: number }> = new Map();
+  private rbStart = { x: 0, y: 0 };
+  // private activeHandle: Handle | null = null; // To be implemented for resizing
+  // private resizeOrigin = { x: 0, y: 0, w: 0, h: 0 };
+
+  onPointerDown(e: ToolEvent) {
+    const { worldX, worldY, sceneGraph, selectionStore, shiftKey } = e;
+    const selectedIds: Set<string> = selectionStore.getState().selectedIds;
+
+    // Hit test in reverse z-order (topmost first)
+    const elements = [...sceneGraph.getElements()].reverse();
+    const hit = elements.find((s: Shape) => HitDetection.isPointInShape({ x: worldX, y: worldY }, s));
+
+    if (hit) {
+      if (shiftKey) {
+        const next = new Set(selectedIds);
+        if (next.has(hit.id)) {
+          next.delete(hit.id);
+        } else {
+          next.add(hit.id);
+        }
+        selectionStore.getState().setSelectedIds(next);
+      } else {
+        if (!selectedIds.has(hit.id)) {
+          selectionStore.getState().setSelectedIds(new Set([hit.id]));
+        }
+      }
+      
+      // Store initial positions for all currently selected
+      this.initialPositions.clear();
+      const finalSelected = selectionStore.getState().selectedIds;
+      sceneGraph.getElements().forEach((s: Shape) => {
+        if (finalSelected.has(s.id)) {
+          this.initialPositions.set(s.id, { x: s.x, y: s.y, w: s.width, h: s.height });
+        }
+      });
+      
+      this.dragStart = { x: worldX, y: worldY };
+      this.mode = 'moving';
+    } else {
+      if (!shiftKey) selectionStore.getState().setSelectedIds(new Set());
+      this.rbStart = { x: worldX, y: worldY };
+      selectionStore.getState().setSelectionBox({ x: worldX, y: worldY, width: 0, height: 0 });
+      this.mode = 'rubber-band';
+    }
+  }
+
+  onPointerMove(e: ToolEvent) {
+    const { worldX, worldY, sceneGraph, selectionStore } = e;
+
+    if (this.mode === 'moving') {
+      const dx = worldX - this.dragStart.x;
+      const dy = worldY - this.dragStart.y;
+      this.initialPositions.forEach((pos, id) => {
+        sceneGraph.update(id, { x: pos.x + dx, y: pos.y + dy });
+      });
+      this.engine.render();
+    } else if (this.mode === 'rubber-band') {
+      const x = Math.min(this.rbStart.x, worldX);
+      const y = Math.min(this.rbStart.y, worldY);
+      const width = Math.abs(worldX - this.rbStart.x);
+      const height = Math.abs(worldY - this.rbStart.y);
+      selectionStore.getState().setSelectionBox({ x, y, width, height });
+
+      const newSelected = new Set<string>();
+      sceneGraph.getElements().forEach((s: Shape) => {
+        if (HitDetection.isRectInShape({ x, y, width, height }, s)) {
+          newSelected.add(s.id);
+        }
+      });
+      selectionStore.getState().setSelectedIds(newSelected);
+      this.engine.render();
+    }
+  }
+
+  onPointerUp(e: ToolEvent) {
+    e.selectionStore.getState().setSelectionBox(null);
+    this.mode = 'idle';
+    this.initialPositions.clear();
+    this.engine.render();
+  }
+}
+
+
+apps/web/src/tools/ShapeTool.ts
+import { BaseTool, ToolEvent } from './BaseTool.js';
+import { ShapeType, Shape } from '@canvasync/shared';
+import { ShapeFactory } from '../shapes/ShapeFactory.js';
+
+export abstract class ShapeTool extends BaseTool {
+  protected abstract shapeType: ShapeType;
+  protected currentShape: Shape | null = null;
+  protected startX = 0;
+  protected startY = 0;
+
+  onPointerDown(e: ToolEvent): void {
+    const { worldX, worldY, sceneGraph, styleStore } = e;
+    this.startX = worldX;
+    this.startY = worldY;
+    const { strokeColor, fillColor, strokeWidth, strokeStyle, opacity } = styleStore.getState();
+    this.currentShape = ShapeFactory.createShape(
+      this.shapeType, worldX, worldY,
+      { strokeColor, fillColor, strokeWidth, strokeStyle, opacity }
+    );
+    sceneGraph.add(this.currentShape);
+    this.engine.render();
+  }
+
+  onPointerMove(e: ToolEvent): void {
+    const { worldX, worldY, shiftKey } = e;
+    if (!this.currentShape) return;
+
+    let width = worldX - this.startX;
+    let height = worldY - this.startY;
+
+    // SHIFT = constrain to square
+    if (shiftKey) {
+      const side = Math.sign(width) * Math.min(Math.abs(width), Math.abs(height));
+      width = side;
+      height = Math.sign(height) * Math.abs(side);
+    }
+
+    const x = width < 0 ? this.startX + width : this.startX;
+    const y = height < 0 ? this.startY + height : this.startY;
+
+    e.sceneGraph.update(this.currentShape.id, {
+      x, y,
+      width: Math.abs(width),
+      height: Math.abs(height),
+    });
+    this.engine.render();
+  }
+
+  onPointerUp(e: ToolEvent): void {
+    if (!this.currentShape) return;
+    if (this.currentShape.width < 2 && this.currentShape.height < 2) {
+      e.sceneGraph.remove(this.currentShape.id);
+    } else {
+      e.sceneGraph.update(this.currentShape.id, { updatedAt: Date.now() });
+    }
+    this.currentShape = null;
+    this.engine.render();
+  }
+}
+
+
+apps/web/src/tools/TextTool.ts
+import { BaseTool, ToolEvent } from './BaseTool.js';
+import { ShapeFactory } from '../shapes/ShapeFactory.js';
+import { TextShape } from '@canvasync/shared';
+import { TransformUtils } from '../canvas/TransformUtils.js';
+
+export class TextTool extends BaseTool {
+  onPointerDown(e: ToolEvent) {
+    const { worldX, worldY, sceneGraph, styleStore } = e;
+    const styles = styleStore.getState();
+
+    // Create a textarea overlay at the world position
+    const camera = this.engine.getCamera();
+    const screenPos = TransformUtils.worldToScreen({ x: worldX, y: worldY }, camera);
+
+    const shape = ShapeFactory.createShape('text', worldX, worldY, styles) as TextShape;
+    shape.width = 200;
+    shape.height = 40;
+    shape.fontSize = 20;
+    shape.content = '';
+
+    const textarea = document.createElement('textarea');
+    textarea.style.cssText = `
+      position: fixed;
+      left: ${screenPos.x}px;
+      top: ${screenPos.y}px;
+      width: ${200 * camera.zoom}px;
+      min-height: ${40 * camera.zoom}px;
+      font-size: ${20 * camera.zoom}px;
+      font-family: Inter, sans-serif;
+      background: transparent;
+      border: none;
+      outline: 2px solid var(--accent);
+      resize: none;
+      overflow: hidden;
+      z-index: 999;
+      color: ${styles.strokeColor};
+      padding: 4px;
+      line-height: 1.4;
+    `;
+    document.body.appendChild(textarea);
+    textarea.focus();
+
+    const finalize = () => {
+      const content = textarea.value.trim();
+      if (content) {
+        shape.content = content;
+        const lines = content.split('\n');
+        shape.height = lines.length * 28;
+        shape.width = Math.max(...lines.map(l => l.length)) * 12;
+        sceneGraph.add(shape);
+      }
+      if (textarea.parentNode) {
+        document.body.removeChild(textarea);
+      }
+      this.engine.render();
+    };
+
+    textarea.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' || (ev.key === 'Enter' && !ev.shiftKey)) {
+        ev.preventDefault();
+        finalize();
+      }
+    });
+    textarea.addEventListener('blur', finalize);
+  }
+
+  onPointerMove(_e: ToolEvent) {}
+  onPointerUp(_e: ToolEvent) {}
+}
+
+
+apps/web/src/tools/ToolManager.ts
+import { CanvasEngine } from '../canvas/CanvasEngine.js';
+import { BaseTool } from './BaseTool.js';
+import { ToolName } from '@canvasync/shared';
+import { useCanvasStore } from '../store/useCanvasStore.js';
+import { useSelectionStore } from '../store/useSelectionStore.js';
+
+export class ToolManager {
+  private activeTool: BaseTool | null = null;
+  private tools: Map<string, BaseTool> = new Map();
+  private previousTool: string | null = null;
+
+  constructor(private engine: CanvasEngine) {
+    // Listen for spacebar override
+    useCanvasStore.subscribe((state) => {
+      if (state.isSpacebarHeld && state.activeTool !== ToolName.PAN) {
+        this.previousTool = state.activeTool;
+        this.setToolInternal(ToolName.PAN);
+      } else if (!state.isSpacebarHeld && this.previousTool) {
+        this.setToolInternal(this.previousTool);
+        this.previousTool = null;
+      }
+    });
+  }
+
+  registerTool(name: string, tool: BaseTool) {
+    this.tools.set(name, tool);
+  }
+
+  setTool(name: string) {
+    this.setToolInternal(name);
+  }
+
+  private setToolInternal(name: string) {
+    const tool = this.tools.get(name);
+    if (!tool) { console.warn(`Tool "${name}" not registered`); return; }
+    
+    this.activeTool?.deactivate();
+    
+    // Clear selection when switching away from selection tool
+    if (name !== ToolName.SELECTION) {
+      useSelectionStore.getState().clearSelection();
+    }
+    
+    this.activeTool = tool;
+    this.activeTool.activate();
+  }
+
+  getActiveTool(): BaseTool | null {
+    return this.activeTool;
+  }
+}
+
+
+apps/web/src/tools/TriangleTool.ts
+import { ShapeTool } from './ShapeTool.js';
+import { ShapeType } from '@canvasync/shared';
+
+export class TriangleTool extends ShapeTool {
+  protected shapeType: ShapeType = 'triangle';
+}
+
+
+apps/web/src/ui/components/AnimatedThemeToggler.tsx
+import React, { useEffect, useState } from 'react';
+import { Moon, Sun } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+
+interface AnimatedThemeTogglerProps {
+  variant?: 'circle' | 'square';
+  duration?: number;
+  className?: string;
+  style?: React.CSSProperties;
+}
+
+export const AnimatedThemeToggler: React.FC<AnimatedThemeTogglerProps> = ({
+  variant = 'circle',
+  duration = 400,
+  className,
+  style,
+}) => {
+  const [theme, setTheme] = useState<'light' | 'dark'>(
+    (localStorage.getItem('theme') as 'light' | 'dark') || 
+    (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+  );
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  const toggleTheme = (event: React.MouseEvent) => {
+    const isDark = theme === 'dark';
+    const nextTheme = isDark ? 'light' : 'dark';
+
+    // Support for View Transitions API
+    if (!document.startViewTransition) {
+      setTheme(nextTheme);
+      return;
+    }
+
+    const x = event.clientX;
+    const y = event.clientY;
+    const endRadius = Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    );
+
+    document.documentElement.style.setProperty('--magicui-theme-toggle-vt-duration', `${duration}ms`);
+    document.documentElement.setAttribute('data-magicui-theme-vt', 'active');
+
+    const transition = document.startViewTransition(() => {
+      setTheme(nextTheme);
+    });
+
+    transition.ready.then(() => {
+      const clipPath = [
+        `circle(0px at ${x}px ${y}px)`,
+        `circle(${endRadius}px at ${x}px ${y}px)`,
+      ];
+      document.documentElement.animate(
+        {
+          clipPath: isDark ? [...clipPath].reverse() : clipPath,
+        },
+        {
+          duration,
+          easing: 'ease-in-out',
+          pseudoElement: isDark ? '::view-transition-old(root)' : '::view-transition-new(root)',
+        }
+      );
+    });
+
+    transition.finished.then(() => {
+      document.documentElement.removeAttribute('data-magicui-theme-vt');
+    });
+  };
+
+  return (
+    <button
+      onClick={toggleTheme}
+      className={className}
+      style={style}
+      aria-label="Toggle theme"
+    >
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={theme}
+          initial={{ y: -20, opacity: 0, rotate: -90 }}
+          animate={{ y: 0, opacity: 1, rotate: 0 }}
+          exit={{ y: 20, opacity: 0, rotate: 90 }}
+          transition={{ duration: 0.2, ease: 'easeInOut' }}
+        >
+          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+        </motion.div>
+      </AnimatePresence>
+    </button>
+  );
+};
+
+
+apps/web/src/ui/components/CreateRoomModal.tsx
+import React, { useState } from 'react';
+import { X } from 'lucide-react';
+
+interface CreateRoomModalProps {
+  onClose: () => void;
+  onCreate: (options: { name?: string; includeElements: boolean }) => void;
+}
+
+export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({ onClose, onCreate }) => {
+  const [name, setName] = useState('');
+  const [includeElements, setIncludeElements] = useState(true);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onCreate({ name: name.trim() || undefined, includeElements });
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+      <div className="w-full max-w-md bg-[var(--bg-secondary)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden backdrop-blur-xl animate-scale-in">
+        <div className="px-8 pt-8 pb-6 relative">
+          <button 
+            onClick={onClose}
+            className="absolute top-4 right-4 p-2 text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)] rounded-full transition-colors"
+          >
+            <X size={18} />
+          </button>
+          
+          <div className="mb-6">
+            <h2 className="text-xl font-bold text-[var(--text-primary)]">Create Room</h2>
+            <p className="text-sm text-[var(--text-secondary)]">Invite others to collaborate in real-time.</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <label htmlFor="name" className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
+                Room Name (Optional)
+              </label>
+              <input
+                type="text"
+                id="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="My Awesome Board"
+                className="w-full bg-[var(--bg-surface)] border border-[var(--border)] text-[var(--text-primary)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[var(--accent-glow)] focus:border-[var(--accent)] transition-all placeholder:text-[var(--text-muted)]"
+                autoFocus
+              />
+            </div>
+
+            <div className="space-y-3">
+              <label className="block text-sm font-medium text-[var(--text-secondary)]">
+                Starting State
+              </label>
+              <div 
+                className={`p-4 border rounded-xl cursor-pointer transition-all ${includeElements ? 'border-[var(--accent)] bg-[var(--accent-glow)]' : 'border-[var(--border)] hover:bg-[var(--bg-surface)]'}`}
+                onClick={() => setIncludeElements(true)}
+              >
+                <div className="font-semibold text-[var(--text-primary)] text-sm mb-1">Take current board with me</div>
+                <div className="text-xs text-[var(--text-muted)]">Keep all shapes currently drawn on your local canvas.</div>
+              </div>
+              <div 
+                className={`p-4 border rounded-xl cursor-pointer transition-all ${!includeElements ? 'border-[var(--accent)] bg-[var(--accent-glow)]' : 'border-[var(--border)] hover:bg-[var(--bg-surface)]'}`}
+                onClick={() => setIncludeElements(false)}
+              >
+                <div className="font-semibold text-[var(--text-primary)] text-sm mb-1">Start Fresh</div>
+                <div className="text-xs text-[var(--text-muted)]">Create a completely blank new board.</div>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white font-bold py-4 rounded-xl shadow-[var(--shadow-md)] transition-all active:scale-[0.98]"
+            >
+              Create & Share
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+apps/web/src/ui/components/JoinRoomModal.tsx
+import React, { useState } from 'react';
+import { useRoomStore } from '../../store/useRoomStore';
+import { ToolName } from '@canvasync/shared';
+import * as DEFAULTS from '@canvasync/shared';
+
+interface JoinRoomModalProps {
+  onJoin: (name: string, color: string) => void;
+}
+
+const COLORS = [
+  '#F87171', '#FB923C', '#FBBF24', '#34D399', 
+  '#22D3EE', '#818CF8', '#C084FC', '#F472B6'
+];
+
+export const JoinRoomModal: React.FC<JoinRoomModalProps> = ({ onJoin }) => {
+  const [name, setName] = useState('');
+  const [selectedColor, setSelectedColor] = useState(COLORS[Math.floor(Math.random() * COLORS.length)]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (name.trim()) {
+      onJoin(name.trim(), selectedColor);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-md bg-slate-900/90 border border-slate-700/50 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-xl">
+        <div className="px-8 pt-8 pb-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 bg-accent rounded-xl flex items-center justify-center shadow-lg shadow-accent/20">
+              <span className="text-white font-bold text-2xl">C</span>
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-white">Join Board</h2>
+              <p className="text-sm text-slate-400">Choose how you'll appear to others</p>
+            </div>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <label htmlFor="name" className="block text-sm font-medium text-slate-300 mb-2">
+                Your Name
+              </label>
+              <input
+                type="text"
+                id="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Enter your name"
+                className="w-full bg-slate-800/50 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-all placeholder:text-slate-500"
+                autoFocus
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-3">
+                Cursor Color
+              </label>
+              <div className="grid grid-cols-4 gap-3">
+                {COLORS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setSelectedColor(color)}
+                    className={`h-10 rounded-lg transition-all transform hover:scale-105 ${
+                      selectedColor === color 
+                        ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900 scale-110' 
+                        : 'opacity-70 hover:opacity-100'
+                    }`}
+                    style={{ backgroundColor: color }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={!name.trim()}
+              className="w-full bg-accent hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl shadow-lg shadow-accent/20 transition-all active:scale-[0.98]"
+            >
+              Join Board
+            </button>
+          </form>
+        </div>
+        
+        <div className="bg-slate-800/30 px-8 py-4 border-t border-slate-700/50">
+          <p className="text-xs text-center text-slate-500">
+            By joining, your cursor and name will be visible to other collaborators.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+apps/web/src/ui/components/LayerControls.tsx
+import React from 'react';
+import { 
+  ArrowUpToLine, 
+  ArrowDownToLine, 
+  ArrowUp, 
+  ArrowDown,
+} from 'lucide-react';
+import { useSelectionStore } from '../../store/useSelectionStore';
+import { SceneGraph } from '../../canvas/SceneGraph';
+
+interface LayerControlsProps {
+  sceneGraph: SceneGraph;
+}
+
+export const LayerControls: React.FC<LayerControlsProps> = ({ sceneGraph }) => {
+  const selectedIds = useSelectionStore((state) => state.selectedIds);
+  
+  if (selectedIds.size === 0) return null;
+
+  // We only apply layer operations to the first selected item for simplicity, 
+  // or we could loop through them. SceneGraph methods currently take a single ID.
+  const selectedId = Array.from(selectedIds)[0];
+
+  const handleAction = (action: (id: string) => void) => {
+    if (selectedId) {
+      action.call(sceneGraph, selectedId);
+    }
+  };
+
+  return (
+    <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 p-1.5 rounded-2xl shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-300">
+      <div className="px-3 py-1 border-r border-slate-800 flex items-center gap-2">
+        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Layer</span>
+      </div>
+      
+      <div className="flex items-center gap-1 px-1">
+        <button
+          onClick={() => handleAction(sceneGraph.bringToFront)}
+          className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all"
+          title="Bring to Front"
+        >
+          <ArrowUpToLine size={18} />
+        </button>
+        
+        <button
+          onClick={() => handleAction(sceneGraph.bringForward)}
+          className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all"
+          title="Bring Forward"
+        >
+          <ArrowUp size={18} />
+        </button>
+        
+        <button
+          onClick={() => handleAction(sceneGraph.sendBackward)}
+          className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all"
+          title="Send Backward"
+        >
+          <ArrowDown size={18} />
+        </button>
+        
+        <button
+          onClick={() => handleAction(sceneGraph.sendToBack)}
+          className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all"
+          title="Send to Back"
+        >
+          <ArrowDownToLine size={18} />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+
+apps/web/src/ui/components/RoomPanel.tsx
+import React, { useState } from 'react';
+import { useRoomStore } from '../../store/useRoomStore';
+import { Copy, Check, Users, Link2, Share2 } from 'lucide-react';
+
+export const RoomPanel: React.FC = () => {
+  const { roomId, collaborators } = useRoomStore();
+  const [copied, setCopied] = useState(false);
+
+  if (!roomId) return null;
+
+  const shareUrl = `${window.location.origin}/#/room/${roomId}`;
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(shareUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3 pointer-events-none">
+      {/* Collaborators List */}
+      <div className="flex flex-col gap-2 mb-2 pointer-events-auto">
+        {Array.from(collaborators.values()).map((col, idx) => (
+          <div 
+            key={idx}
+            className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-md border border-slate-700/50 px-3 py-1.5 rounded-full shadow-lg transition-all animate-in slide-in-from-right-4 duration-300"
+          >
+            <div 
+              className="w-2.5 h-2.5 rounded-full" 
+              style={{ backgroundColor: col.user.color }} 
+            />
+            <span className="text-xs font-medium text-slate-200">{col.user.name}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Share Panel */}
+      <div className="bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl overflow-hidden p-4 w-72 pointer-events-auto">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="p-1.5 bg-accent/20 text-accent rounded-lg">
+            <Share2 size={16} />
+          </div>
+          <h3 className="text-sm font-bold text-white">Share Board</h3>
+        </div>
+
+        <div className="flex items-center gap-2 bg-slate-800/50 border border-slate-700/50 rounded-xl p-1.5 pl-3 mb-4">
+          <Link2 size={14} className="text-slate-500 shrink-0" />
+          <input 
+            type="text" 
+            readOnly 
+            value={shareUrl}
+            className="bg-transparent border-none text-[10px] text-slate-300 focus:outline-none w-full truncate"
+          />
+          <button 
+            onClick={copyLink}
+            className={`p-2 rounded-lg transition-all shrink-0 ${
+              copied ? 'bg-green-500/20 text-green-400' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+            }`}
+          >
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between text-[10px] text-slate-500 font-medium px-1">
+          <div className="flex items-center gap-1.5">
+            <Users size={12} />
+            <span>{collaborators.size} active now</span>
+          </div>
+          <span>Public board</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+apps/web/src/ui/components/StylePanel.tsx
+import React, { useState } from 'react';
+import { useSelectionStore } from '../../store/useSelectionStore.js';
+import { useStyleStore } from '../../store/useStyleStore.js';
+import { useShapeStore } from '../../store/useShapeStore.js';
+import { useCanvasStore } from '../../store/useCanvasStore.js';
+import { StrokeStyle, ToolName } from '@canvasync/shared';
+import {
+  ArrowUpToLine, ArrowDownToLine, ArrowUp, ArrowDown, Trash2, AlignLeft, AlignCenter, AlignRight
+} from 'lucide-react';
+
+const STROKE_COLORS = [
+  '#fafafa', '#09090b', '#ef4444', '#f97316', '#eab308',
+  '#22c55e', '#06b6d4', '#6366f1', '#a855f7', '#ec4899',
+];
+
+const FILL_COLORS = [
+  'transparent', '#09090b', '#fafafa', '#ef4444', '#f97316',
+  '#eab308', '#22c55e', '#06b6d4', '#6366f1', '#a855f7',
+];
+
+const STROKE_WIDTHS = [1, 2, 4, 6];
+const STROKE_STYLES: { id: StrokeStyle; label: string }[] = [
+  { id: 'solid', label: 'Solid' },
+  { id: 'dashed', label: 'Dash' },
+  { id: 'dotted', label: 'Dot' },
+];
+
+const FONT_FAMILIES = [
+  { id: 'Inter', label: 'Sans', icon: 'Aa' },
+  { id: 'Playwrite GB J', label: 'Script', icon: 'Gg' },
+  { id: 'Cascadia Code', label: 'Mono', icon: '<>' },
+  { id: 'Roboto', label: 'Roboto', icon: 'Rr' },
+];
+const FONT_SIZES = [
+  { label: 'S', value: 14 },
+  { label: 'M', value: 20 },
+  { label: 'L', value: 32 },
+  { label: 'XL', value: 48 },
+];
+
+const ERASER_SIZES = [
+  { label: 'S', value: 8 },
+  { label: 'M', value: 20 },
+  { label: 'L', value: 40 },
+  { label: 'XL', value: 80 },
+];
+
+const TOOL_LABELS: Record<string, string> = {
+  [ToolName.SELECTION]: 'Selection',
+  [ToolName.PEN]: 'Pen',
+  [ToolName.RECTANGLE]: 'Rectangle',
+  [ToolName.ELLIPSE]: 'Ellipse',
+  [ToolName.TRIANGLE]: 'Triangle',
+  [ToolName.RHOMBUS]: 'Diamond',
+  [ToolName.LINE]: 'Line',
+  [ToolName.ARROW]: 'Arrow',
+  [ToolName.TEXT]: 'Text',
+  [ToolName.ERASER]: 'Eraser',
+};
+
+interface StylePanelProps {
+  sceneGraph?: any;
+}
+
+export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
+  const { selectedIds } = useSelectionStore();
+  const { strokeColor, setStrokeColor, fillColor, setFillColor, strokeWidth, setStrokeWidth, opacity, setOpacity, strokeStyle, setStrokeStyle } = useStyleStore();
+  const { updateShape, removeShape } = useShapeStore();
+  const elements = useShapeStore(state => state.elements);
+  const { activeTool } = useCanvasStore();
+
+  const [fontFamily, setFontFamilyState] = useState('Inter');
+  const [fontSize, setFontSizeState] = useState(20);
+  const [textAlign, setTextAlignState] = useState<'left'|'center'|'right'>('left');
+
+  const [eraserMode, setEraserModeState] = useState<'element' | 'partial'>('element');
+  const [eraserSize, setEraserSizeState] = useState(20);
+
+  const setFontFamily = (f: string) => {
+    setFontFamilyState(f);
+    (window as any).__textFontFamily = f;
+    selectedIds.forEach(id => updateShape(id, { fontFamily: f } as any));
+  };
+  const setFontSize = (s: number) => {
+    setFontSizeState(s);
+    (window as any).__textFontSize = s;
+    selectedIds.forEach(id => updateShape(id, { fontSize: s } as any));
+  };
+  const setTextAlign = (a: 'left'|'center'|'right') => {
+    setTextAlignState(a);
+    (window as any).__textAlign = a;
+    selectedIds.forEach(id => updateShape(id, { textAlign: a } as any));
+  };
+
+  const setEraserMode = (m: 'element'|'partial') => {
+    setEraserModeState(m);
+    (window as any).__eraserMode = m;
+  };
+  const setEraserSize = (s: number) => {
+    setEraserSizeState(s);
+    (window as any).__eraserSize = s;
+  };
+
+  const SHAPE_TOOLS = [ToolName.RECTANGLE, ToolName.ELLIPSE, ToolName.TRIANGLE, ToolName.RHOMBUS];
+  const DRAW_TOOLS = [ToolName.PEN, ToolName.LINE, ToolName.ARROW];
+  
+  const isSelectionToolActive = activeTool === ToolName.SELECTION;
+  const isVisible = 
+    (isSelectionToolActive && selectedIds.size > 0) ||          
+    SHAPE_TOOLS.includes(activeTool as any) ||                  
+    DRAW_TOOLS.includes(activeTool as any) ||                   
+    activeTool === ToolName.TEXT ||                             
+    activeTool === ToolName.ERASER;                             
+
+  const showFill = SHAPE_TOOLS.includes(activeTool as any) || 
+    (isSelectionToolActive && selectedIds.size > 0);
+
+  const isTextContext = activeTool === ToolName.TEXT || 
+    (selectedIds.size > 0 && elements.find(el => selectedIds.has(el.id) && el.type === 'text'));
+
+  if (!isVisible) return null;
+
+  const applyStyle = (updates: Record<string, any>) => {
+    if (updates.strokeColor !== undefined) setStrokeColor(updates.strokeColor);
+    if (updates.fillColor !== undefined) setFillColor(updates.fillColor);
+    if (updates.strokeWidth !== undefined) setStrokeWidth(updates.strokeWidth);
+    if (updates.opacity !== undefined) setOpacity(updates.opacity);
+    if (updates.strokeStyle !== undefined) setStrokeStyle(updates.strokeStyle);
+    selectedIds.forEach((id) => updateShape(id, updates as any));
+  };
+
+  const deleteSelected = () => {
+    selectedIds.forEach((id) => removeShape(id));
+    useSelectionStore.getState().clearSelection();
+  };
+
+  const selectedId = Array.from(selectedIds)[0];
+
+  const SectionLabel = ({ children }: { children: React.ReactNode }) => (
+    <div className="text-[10px] font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>
+      {children}
+    </div>
+  );
+
+  const ColorSwatch = ({ color, selected, onClick }: { color: string; selected: boolean; onClick: () => void }) => (
+    <button
+      onClick={onClick}
+      className="w-7 h-7 rounded-lg transition-all duration-100 active:scale-90 relative"
+      style={{
+        background: color === 'transparent' ? undefined : color,
+        border: selected ? '2px solid var(--text-primary)' : '1.5px solid var(--border)',
+        transform: selected ? 'scale(1.12)' : undefined,
+        boxShadow: selected ? '0 0 0 2px var(--bg-surface)' : undefined,
+      }}
+    >
+      {color === 'transparent' && (
+        <div className="absolute inset-0 rounded-lg overflow-hidden">
+          <div className="w-full h-full" style={{
+            background: 'repeating-linear-gradient(45deg, #ccc 0px, #ccc 2px, transparent 2px, transparent 6px)',
+          }} />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-[70%] h-px rotate-45" style={{ background: '#ef4444' }} />
+          </div>
+        </div>
+      )}
+    </button>
+  );
+
+  return (
+    <div
+      className="fixed right-3 z-40 w-56 rounded-2xl overflow-hidden animate-slide-right no-scrollbar"
+      style={{
+        top: '56px',
+        background: 'var(--toolbar-bg)',
+        backdropFilter: 'blur(20px) saturate(180%)',
+        border: '1px solid var(--border)',
+        boxShadow: 'var(--shadow-lg)',
+        maxHeight: 'calc(100vh - 80px)',
+        overflowY: 'auto',
+        cursor: 'default',
+        pointerEvents: 'all'
+      }}
+      onPointerDown={e => e.stopPropagation()}
+      onPointerMove={e => e.stopPropagation()}
+      onPointerUp={e => e.stopPropagation()}
+    >
+      <div className="px-3 pt-3 pb-2 border-b" style={{ borderColor: 'var(--border)' }}>
+        <span className="text-[11px] font-bold uppercase tracking-widest" 
+          style={{ color: 'var(--accent)' }}>
+          {TOOL_LABELS[activeTool] || activeTool}
+        </span>
+      </div>
+
+      <div className="p-3 space-y-4">
+        {activeTool === ToolName.ERASER ? (
+          <>
+            <section>
+              <SectionLabel>Eraser Type</SectionLabel>
+              <div className="space-y-1">
+                {[
+                  { id: 'element', label: 'Whole Element', desc: 'Removes the full shape' },
+                  { id: 'partial', label: 'Partial', desc: 'Erases only covered area' },
+                ].map(opt => (
+                  <button key={opt.id} onClick={() => setEraserMode(opt.id as any)}
+                    className="w-full text-left p-2.5 rounded-xl transition-all"
+                    style={{
+                      background: eraserMode === opt.id ? 'var(--accent-glow)' : 'var(--bg-elevated)',
+                      border: `1.5px solid ${eraserMode === opt.id ? 'var(--accent)' : 'transparent'}`,
+                    }}>
+                    <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {opt.label}
+                    </div>
+                    <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                      {opt.desc}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <SectionLabel>Size</SectionLabel>
+              <div className="flex gap-1">
+                {ERASER_SIZES.map(s => (
+                  <button key={s.label} onClick={() => setEraserSize(s.value)}
+                    className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                    style={{
+                      background: eraserSize === s.value ? 'var(--accent)' : 'var(--bg-elevated)',
+                      color: eraserSize === s.value ? '#fff' : 'var(--text-secondary)',
+                    }}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+          </>
+        ) : isTextContext ? (
+          <>
+            <section>
+              <SectionLabel>Font</SectionLabel>
+              <div className="grid grid-cols-4 gap-1">
+                {FONT_FAMILIES.map(f => (
+                  <button key={f.id} onClick={() => setFontFamily(f.id)}
+                    className="flex flex-col items-center py-1.5 rounded-lg text-[10px] gap-0.5 transition-all"
+                    style={{
+                      background: fontFamily === f.id ? 'var(--accent)' : 'var(--bg-elevated)',
+                      color: fontFamily === f.id ? '#fff' : 'var(--text-secondary)',
+                      fontFamily: f.id === 'Playwrite GB J' ? "'Playwrite GB J', cursive" 
+                                 : f.id === 'Cascadia Code' ? "'Cascadia Code', monospace" 
+                                 : undefined,
+                    }}>
+                    <span className="text-sm font-bold">{f.icon}</span>
+                    <span className="text-[9px]">{f.label}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <SectionLabel>Size</SectionLabel>
+              <div className="flex gap-1">
+                {FONT_SIZES.map(s => (
+                  <button key={s.label} onClick={() => setFontSize(s.value)}
+                    className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                    style={{
+                      background: fontSize === s.value ? 'var(--accent)' : 'var(--bg-elevated)',
+                      color: fontSize === s.value ? '#fff' : 'var(--text-secondary)',
+                    }}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <SectionLabel>Align</SectionLabel>
+              <div className="flex gap-1">
+                {[
+                  { v: 'left', Icon: AlignLeft },
+                  { v: 'center', Icon: AlignCenter },
+                  { v: 'right', Icon: AlignRight },
+                ].map(({ v, Icon }) => (
+                  <button key={v} onClick={() => setTextAlign(v as any)}
+                    className="flex-1 flex items-center justify-center py-1.5 rounded-lg transition-all"
+                    style={{
+                      background: textAlign === v ? 'var(--accent)' : 'var(--bg-elevated)',
+                      color: textAlign === v ? '#fff' : 'var(--text-secondary)',
+                    }}>
+                    <Icon size={13} />
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <SectionLabel>Color</SectionLabel>
+              <div className="grid grid-cols-5 gap-1.5">
+                {STROKE_COLORS.map(c => (
+                  <ColorSwatch key={c} color={c} selected={strokeColor === c}
+                    onClick={() => applyStyle({ strokeColor: c, textColor: c })} />
+                ))}
+              </div>
+            </section>
+          </>
+        ) : (
+          <>
+            <section>
+              <SectionLabel>Stroke</SectionLabel>
+              <div className="grid grid-cols-5 gap-1.5 mb-2">
+                {STROKE_COLORS.map((c) => (
+                  <ColorSwatch key={c} color={c} selected={strokeColor === c} onClick={() => applyStyle({ strokeColor: c })} />
+                ))}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="color"
+                  value={strokeColor.startsWith('#') ? strokeColor : '#000000'}
+                  onChange={(e) => applyStyle({ strokeColor: e.target.value })}
+                  className="w-7 h-7 rounded cursor-pointer"
+                  style={{ border: '1.5px solid var(--border)', padding: '2px' }}
+                />
+                <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>{strokeColor}</span>
+              </div>
+            </section>
+
+            {showFill && (
+              <section>
+                <SectionLabel>Fill</SectionLabel>
+                <div className="grid grid-cols-5 gap-1.5 mb-2">
+                  {FILL_COLORS.map((c) => (
+                    <ColorSwatch key={c} color={c} selected={fillColor === c} onClick={() => applyStyle({ fillColor: c })} />
+                  ))}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="color"
+                    value={fillColor.startsWith('#') ? fillColor : '#000000'}
+                    onChange={(e) => applyStyle({ fillColor: e.target.value })}
+                    className="w-7 h-7 rounded cursor-pointer"
+                    style={{ border: '1.5px solid var(--border)', padding: '2px', opacity: fillColor === 'transparent' ? 0.4 : 1 }}
+                    disabled={fillColor === 'transparent'}
+                  />
+                  <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                    {fillColor === 'transparent' ? 'none' : fillColor}
+                  </span>
+                </div>
+              </section>
+            )}
+
+            <section>
+              <SectionLabel>Stroke Width</SectionLabel>
+              <div className="flex gap-1">
+                {STROKE_WIDTHS.map((w) => (
+                  <button
+                    key={w}
+                    onClick={() => applyStyle({ strokeWidth: w })}
+                    className="flex-1 py-1.5 rounded-lg text-xs font-medium transition-all"
+                    style={{
+                      background: strokeWidth === w ? 'var(--accent)' : 'var(--bg-elevated)',
+                      color: strokeWidth === w ? '#fff' : 'var(--text-secondary)',
+                      boxShadow: strokeWidth === w ? '0 0 8px var(--accent-glow)' : 'none',
+                    }}
+                  >
+                    {w}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <SectionLabel>Stroke Style</SectionLabel>
+              <div className="flex gap-1">
+                {STROKE_STYLES.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => applyStyle({ strokeStyle: s.id })}
+                    className="flex-1 py-1.5 rounded-lg text-xs font-medium transition-all"
+                    style={{
+                      background: strokeStyle === s.id ? 'var(--accent)' : 'var(--bg-elevated)',
+                      color: strokeStyle === s.id ? '#fff' : 'var(--text-secondary)',
+                    }}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section>
+              <div className="flex justify-between items-center mb-2">
+                <SectionLabel>Opacity</SectionLabel>
+                <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                  {Math.round(opacity * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0" max="1" step="0.05"
+                value={opacity}
+                onChange={(e) => applyStyle({ opacity: parseFloat(e.target.value) })}
+                className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+                style={{ accentColor: 'var(--accent)' }}
+              />
+            </section>
+          </>
+        )}
+
+        {selectedIds.size > 0 && sceneGraph && (
+          <>
+            <div style={{ height: '1px', background: 'var(--border)' }} />
+            <section>
+              <SectionLabel>Layer</SectionLabel>
+              <div className="grid grid-cols-4 gap-1">
+                {[
+                  { icon: ArrowUpToLine, label: 'Front', action: () => sceneGraph.bringToFront(selectedId) },
+                  { icon: ArrowUp, label: 'Forward', action: () => sceneGraph.bringForward(selectedId) },
+                  { icon: ArrowDown, label: 'Backward', action: () => sceneGraph.sendBackward(selectedId) },
+                  { icon: ArrowDownToLine, label: 'Back', action: () => sceneGraph.sendToBack(selectedId) },
+                ].map(({ icon: Icon, label, action }) => (
+                  <button
+                    key={label}
+                    onClick={action}
+                    title={label}
+                    className="flex items-center justify-center p-2 rounded-lg transition-colors"
+                    style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+                    onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                  >
+                    <Icon size={14} />
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <div style={{ height: '1px', background: 'var(--border)' }} />
+            <button
+              onClick={deleteSelected}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-medium transition-all"
+              style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.2)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.1)'; }}
+            >
+              <Trash2 size={13} />
+              Delete
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+
+apps/web/src/ui/components/Toolbar.tsx
+import React from 'react';
+import {
+  MousePointer2, Hand, Pencil, Square, Circle,
+  Minus, ArrowRight, Type, Eraser, Triangle, Diamond
+} from 'lucide-react';
+import { ToolName } from '@canvasync/shared';
+import { useCanvasStore } from '../../store/useCanvasStore.js';
+import { ToolButton } from './ToolButton.js';
+
+const TOOL_GROUPS = [
+  {
+    tools: [
+      { id: ToolName.SELECTION, icon: MousePointer2, label: 'Select', shortcut: 'V' },
+      { id: ToolName.PAN, icon: Hand, label: 'Pan', shortcut: 'H' },
+    ]
+  },
+  {
+    tools: [
+      { id: ToolName.PEN, icon: Pencil, label: 'Pen', shortcut: 'P' },
+      { id: ToolName.ERASER, icon: Eraser, label: 'Eraser', shortcut: 'X' },
+    ]
+  },
+  {
+    tools: [
+      { id: ToolName.RECTANGLE, icon: Square, label: 'Rectangle', shortcut: 'R' },
+      { id: ToolName.ELLIPSE, icon: Circle, label: 'Ellipse', shortcut: 'E' },
+      { id: ToolName.TRIANGLE, icon: Triangle, label: 'Triangle', shortcut: 'G' },
+      { id: ToolName.RHOMBUS, icon: Diamond, label: 'Diamond', shortcut: 'D' },
+    ]
+  },
+  {
+    tools: [
+      { id: ToolName.LINE, icon: Minus, label: 'Line', shortcut: 'L' },
+      { id: ToolName.ARROW, icon: ArrowRight, label: 'Arrow', shortcut: 'A' },
+    ]
+  },
+  {
+    tools: [
+      { id: ToolName.TEXT, icon: Type, label: 'Text', shortcut: 'T' },
+    ]
+  },
+];
+
+export const Toolbar: React.FC = () => {
+  const { activeTool, setActiveTool } = useCanvasStore();
+
+  return (
+    <div
+      className="fixed left-3 z-40 flex flex-col gap-1 p-1.5 rounded-2xl animate-slide-left no-scrollbar"
+      style={{
+        top: '50%',
+        transform: 'translateY(calc(-50% + 22px))',
+        background: 'var(--toolbar-bg)',
+        backdropFilter: 'blur(20px) saturate(180%)',
+        border: '1px solid var(--border)',
+        boxShadow: 'var(--shadow-lg)',
+        maxHeight: 'calc(100vh - 100px)',
+        overflowY: 'auto',
+        cursor: 'default',
+        pointerEvents: 'all'
+      }}
+      onPointerDown={e => e.stopPropagation()}
+      onPointerMove={e => e.stopPropagation()}
+      onPointerUp={e => e.stopPropagation()}
+    >
+      {TOOL_GROUPS.map((group, groupIdx) => (
+        <React.Fragment key={groupIdx}>
+          {groupIdx > 0 && (
+            <div className="mx-2 my-0.5" style={{ height: '1px', background: 'var(--border)' }} />
+          )}
+          {group.tools.map((tool) => (
+            <ToolButton
+              key={tool.id}
+              icon={tool.icon}
+              label={tool.label}
+              shortcut={tool.shortcut}
+              isActive={activeTool === tool.id}
+              onClick={() => setActiveTool(tool.id as ToolName)}
+            />
+          ))}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+};
+
+
+apps/web/src/ui/components/ToolButton.tsx
+import React from 'react';
+import { LucideIcon } from 'lucide-react';
+
+interface ToolButtonProps {
+  icon: LucideIcon;
+  label: string;
+  shortcut?: string;
+  isActive?: boolean;
+  onClick: () => void;
+  className?: string;
+}
+
+export const ToolButton: React.FC<ToolButtonProps> = ({ icon: Icon, label, shortcut, isActive, onClick }) => {
+  return (
+    <div className="relative group">
+      <button
+        onClick={onClick}
+        title={`${label}${shortcut ? ` (${shortcut})` : ''}`}
+        className="relative flex items-center justify-center w-9 h-9 rounded-xl transition-all duration-150 active:scale-90"
+        style={{
+          background: isActive ? 'var(--accent)' : 'transparent',
+          color: isActive ? '#ffffff' : 'var(--text-secondary)',
+          boxShadow: isActive ? '0 0 12px var(--accent-glow)' : 'none',
+        }}
+        onMouseEnter={e => {
+          if (!isActive) e.currentTarget.style.background = 'var(--bg-elevated)';
+          e.currentTarget.style.color = isActive ? '#ffffff' : 'var(--text-primary)';
+        }}
+        onMouseLeave={e => {
+          if (!isActive) e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.color = isActive ? '#ffffff' : 'var(--text-secondary)';
+        }}
+      >
+        <Icon size={17} strokeWidth={isActive ? 2.2 : 1.8} />
+        {isActive && (
+          <span
+            className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 rounded-r-full"
+            style={{ background: '#ffffff', opacity: 0.7 }}
+          />
+        )}
+      </button>
+
+      {/* Tooltip */}
+      <div
+        className="absolute left-full ml-2.5 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-150 whitespace-nowrap z-[100]"
+      >
+        <div
+          className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg"
+          style={{
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border)',
+            color: 'var(--text-primary)',
+            boxShadow: 'var(--shadow-md)',
+          }}
+        >
+          {label}
+          {shortcut && (
+            <kbd
+              className="text-[10px] px-1 py-0.5 rounded"
+              style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)', fontFamily: 'monospace' }}
+            >
+              {shortcut}
+            </kbd>
+          )}
+        </div>
+        {/* Arrow */}
+        <div
+          className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent"
+          style={{ borderRightColor: 'var(--border)' }}
+        />
+      </div>
+    </div>
+  );
+};
+
+
+apps/web/src/ui/components/TopBar.tsx
+import React, { useState, useRef, useEffect } from 'react';
+import { Share2, Users, ChevronDown, Plus, Minus } from 'lucide-react';
+import { useCanvasStore } from '../../store/useCanvasStore.js';
+import { useRoomStore } from '../../store/useRoomStore.js';
+import { AnimatedThemeToggler } from './AnimatedThemeToggler.js';
+
+interface TopBarProps {
+  onShareClick?: () => void;
+  canvasName?: string;
+  onNameChange?: (name: string) => void;
+}
+
+export const TopBar: React.FC<TopBarProps> = ({ onShareClick, canvasName = 'Untitled', onNameChange }) => {
+  const { camera, updateCamera } = useCanvasStore();
+  const { roomId, collaborators } = useRoomStore();
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [localName, setLocalName] = useState(canvasName);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { setLocalName(canvasName); }, [canvasName]);
+
+  const handleNameSubmit = () => {
+    setIsEditingName(false);
+    if (localName.trim()) onNameChange?.(localName.trim());
+    else setLocalName(canvasName);
+  };
+
+  const zoomPct = Math.round(camera.zoom * 100);
+
+  return (
+    <div
+      className="fixed top-0 left-0 right-0 z-50 h-11 flex items-center justify-between px-3 gap-2"
+      style={{
+        background: 'var(--toolbar-bg)',
+        backdropFilter: 'blur(20px) saturate(180%)',
+        borderBottom: '1px solid var(--border)',
+        boxShadow: 'var(--shadow-sm)',
+      }}
+    >
+      {/* LEFT — Logo + Name */}
+      <div className="flex items-center gap-2 min-w-0">
+        <div
+          className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm text-white"
+          style={{ background: 'var(--accent)', boxShadow: '0 0 12px var(--accent-glow)' }}
+        >
+          C
+        </div>
+
+        {isEditingName ? (
+          <input
+            ref={nameInputRef}
+            value={localName}
+            onChange={(e) => setLocalName(e.target.value)}
+            onBlur={handleNameSubmit}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleNameSubmit(); if (e.key === 'Escape') { setIsEditingName(false); setLocalName(canvasName); } }}
+            className="text-sm font-medium bg-transparent border-b outline-none min-w-[80px] max-w-[200px]"
+            style={{ color: 'var(--text-primary)', borderColor: 'var(--accent)' }}
+            autoFocus
+          />
+        ) : (
+          <button
+            onClick={() => { setIsEditingName(true); setTimeout(() => nameInputRef.current?.select(), 10); }}
+            className="flex items-center gap-1 text-sm font-medium transition-colors rounded px-1.5 py-0.5 hover:bg-[var(--bg-elevated)] group"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            <span className="truncate max-w-[160px]">{localName}</span>
+            <ChevronDown size={12} className="opacity-40 group-hover:opacity-70 transition-opacity" />
+          </button>
+        )}
+
+        {roomId && (
+          <span
+            className="text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+            style={{ background: 'rgba(99,102,241,0.15)', color: 'var(--accent)' }}
+          >
+            LIVE
+          </span>
+        )}
+      </div>
+
+      {/* CENTER — Zoom Controls */}
+      <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-0.5 rounded-lg p-0.5"
+        style={{ background: 'var(--bg-elevated)' }}>
+        <button
+          onClick={() => {
+            const newZoom = Math.max(0.05, camera.zoom / 1.25);
+            updateCamera({ zoom: newZoom });
+            window.dispatchEvent(new CustomEvent('canvas:zoom', { detail: { zoom: newZoom } }));
+          }}
+          className="w-7 h-7 flex items-center justify-center rounded-md transition-colors text-xs"
+          style={{ color: 'var(--text-secondary)' }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+          title="Zoom Out (−)"
+        >
+          <Minus size={13} />
+        </button>
+
+        <button
+          onClick={() => {
+            updateCamera({ zoom: 1, x: 0, y: 0 });
+            window.dispatchEvent(new CustomEvent('canvas:zoom', { detail: { zoom: 1, x: 0, y: 0 } }));
+          }}
+          className="px-2 h-7 text-[11px] font-semibold tabular-nums rounded-md transition-colors"
+          style={{ color: 'var(--text-secondary)', minWidth: '52px' }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+          title="Reset Zoom"
+        >
+          {zoomPct}%
+        </button>
+
+        <button
+          onClick={() => {
+            const newZoom = Math.min(20, camera.zoom * 1.25);
+            updateCamera({ zoom: newZoom });
+            window.dispatchEvent(new CustomEvent('canvas:zoom', { detail: { zoom: newZoom } }));
+          }}
+          className="w-7 h-7 flex items-center justify-center rounded-md transition-colors"
+          style={{ color: 'var(--text-secondary)' }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-surface)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+          title="Zoom In (+)"
+        >
+          <Plus size={13} />
+        </button>
+      </div>
+
+      {/* RIGHT — Collaborators + Theme + Share */}
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        {/* Collaborator avatars */}
+        {collaborators.size > 0 && (
+          <div className="flex -space-x-1.5 mr-1">
+            {Array.from(collaborators.values()).slice(0, 4).map((col: any, i) => (
+              <div
+                key={i}
+                title={col.user?.name || 'Anonymous'}
+                className="w-6 h-6 rounded-full border-2 flex items-center justify-center text-[9px] font-bold text-white uppercase ring-1 ring-black/10"
+                style={{ backgroundColor: col.user?.color || '#888', borderColor: 'var(--bg-surface)' }}
+              >
+                {(col.user?.name || 'A').charAt(0)}
+              </div>
+            ))}
+            {collaborators.size > 4 && (
+              <div className="w-6 h-6 rounded-full border-2 flex items-center justify-center text-[9px] font-semibold"
+                style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--bg-surface)', color: 'var(--text-muted)' }}>
+                +{collaborators.size - 4}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Theme toggle */}
+        <AnimatedThemeToggler
+          variant="circle"
+          duration={400}
+          className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors hover:bg-[var(--bg-elevated)]"
+          style={{ color: 'var(--text-secondary)' } as any}
+        />
+
+        {/* Share button */}
+        <button
+          onClick={onShareClick}
+          className="flex items-center gap-1.5 text-xs font-semibold text-white px-3 py-1.5 rounded-lg transition-all active:scale-95"
+          style={{
+            background: 'var(--accent)',
+            boxShadow: '0 2px 8px var(--accent-glow)',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.background = 'var(--accent-hover)')}
+          onMouseLeave={e => (e.currentTarget.style.background = 'var(--accent)')}
+        >
+          <Share2 size={13} />
+          <span className="hidden sm:inline">Share</span>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+
+apps/web/src/ui/components/ZoomControls.tsx
+import React from 'react';
+import { Plus, Minus } from 'lucide-react';
+import { useCanvasStore } from '../../store/useCanvasStore.js';
+
+export const ZoomControls: React.FC = () => {
+  const { camera, updateCamera } = useCanvasStore();
+  const pct = Math.round(camera.zoom * 100);
+
+  return (
+    <div
+      className="fixed bottom-4 right-4 z-40 flex items-center gap-0.5 rounded-xl p-1 animate-slide-bottom"
+      style={{
+        background: 'var(--toolbar-bg)',
+        backdropFilter: 'blur(20px)',
+        border: '1px solid var(--border)',
+        boxShadow: 'var(--shadow-md)',
+      }}
+    >
+      <button
+        onClick={() => updateCamera({ zoom: Math.max(0.05, camera.zoom / 1.25) })}
+        title="Zoom Out"
+        className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors"
+        style={{ color: 'var(--text-secondary)' }}
+        onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+      >
+        <Minus size={14} />
+      </button>
+
+      <button
+        onClick={() => updateCamera({ zoom: 1, x: 0, y: 0 })}
+        className="px-2 h-8 text-[11px] font-semibold tabular-nums rounded-lg transition-colors"
+        style={{ color: 'var(--text-secondary)', minWidth: '44px' }}
+        onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+      >
+        {pct}%
+      </button>
+
+      <button
+        onClick={() => updateCamera({ zoom: Math.min(20, camera.zoom * 1.25) })}
+        title="Zoom In"
+        className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors"
+        style={{ color: 'var(--text-secondary)' }}
+        onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+      >
+        <Plus size={14} />
+      </button>
+    </div>
+  );
+};
+
+
