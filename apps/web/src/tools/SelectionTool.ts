@@ -2,18 +2,21 @@ import { BaseTool, ToolEvent } from './BaseTool.js';
 import { ToolName, Shape } from '@canvasync/shared';
 import { HitDetection } from '../canvas/HitDetection.js';
 
+import { findHoveredShape, getNearestAnchorOnShape, getShapeConnectionPoint, resolveArrowEndpoints, getArrowMidPoint } from '../canvas/ArrowConnections.js';
+import { ArrowHoverOverlay } from '../renderer/ArrowHoverOverlay.js';
+
 // Handle types for resize
-type ResizeHandle = 'tl' | 'tc' | 'tr' | 'ml' | 'mr' | 'bl' | 'bc' | 'br' | 'rotate';
+type ResizeHandle = 'tl' | 'tc' | 'tr' | 'ml' | 'mr' | 'bl' | 'bc' | 'br' | 'rotate' | 'arrow-start' | 'arrow-end' | 'arrow-mid';
 
 interface HandleHit {
   type: ResizeHandle;
-  originX: number; // opposite corner world X (anchor for resize)
-  originY: number;
+  originX?: number; // opposite corner world X (anchor for resize)
+  originY?: number;
 }
 
 export class SelectionTool extends BaseTool {
   name = ToolName.SELECTION;
-  private mode: 'idle' | 'moving' | 'rubber-band' | 'resizing' | 'rotating' = 'idle';
+  private mode: 'idle' | 'moving' | 'rubber-band' | 'resizing' | 'rotating' | 'arrow-edit' = 'idle';
   private dragStart = { x: 0, y: 0 };
   private initialPositions: Map<string, {
     x: number;
@@ -23,6 +26,7 @@ export class SelectionTool extends BaseTool {
     rotation: number;
     fontSize?: number;
     points?: Array<{ x: number; y: number }>;
+    bend?: number;
   }> = new Map();
   private rbStart = { x: 0, y: 0 };
   private activeHandle: HandleHit | null = null;
@@ -49,6 +53,8 @@ export class SelectionTool extends BaseTool {
             worldX - (bbox.x + bbox.w / 2)
           );
           this.initialBBox = bbox;
+        } else if (handleHit.type === 'arrow-start' || handleHit.type === 'arrow-end' || handleHit.type === 'arrow-mid') {
+          this.mode = 'arrow-edit';
         } else {
           this.mode = 'resizing';
         }
@@ -100,6 +106,40 @@ export class SelectionTool extends BaseTool {
         }
         sceneGraph.update(id, updates);
       });
+
+      // Also refresh bounding boxes of arrows connected to moved shapes
+      const movedIds = new Set(this.initialPositions.keys());
+      sceneGraph.getElements().forEach((s: Shape) => {
+        if (s.type !== 'arrow') return;
+        const arrow = s as any;
+        const touchesStart = arrow.startShapeId && movedIds.has(arrow.startShapeId);
+        const touchesEnd   = arrow.endShapeId   && movedIds.has(arrow.endShapeId);
+        if (!touchesStart && !touchesEnd) return;
+
+        // Recompute arrow's points from anchors so bbox stays correct
+        let p1 = arrow.points[0];
+        let p2 = arrow.points[arrow.points.length - 1];
+        if (touchesStart && arrow.startAnchor) {
+          const src = sceneGraph.getById(arrow.startShapeId);
+          if (src) {
+            p1 = { x: src.x + arrow.startAnchor.rx * src.width, y: src.y + arrow.startAnchor.ry * src.height };
+          }
+        }
+        if (touchesEnd && arrow.endAnchor) {
+          const dst = sceneGraph.getById(arrow.endShapeId);
+          if (dst) {
+            p2 = { x: dst.x + arrow.endAnchor.rx * dst.width, y: dst.y + arrow.endAnchor.ry * dst.height };
+          }
+        }
+        sceneGraph.update(arrow.id, {
+          points: [p1, p2],
+          x: Math.min(p1.x, p2.x),
+          y: Math.min(p1.y, p2.y),
+          width:  Math.abs(p2.x - p1.x),
+          height: Math.abs(p2.y - p1.y),
+        });
+      });
+
       this.engine.render();
     } else if (this.mode === 'rubber-band') {
       const x = Math.min(this.rbStart.x, worldX);
@@ -120,6 +160,91 @@ export class SelectionTool extends BaseTool {
     } else if (this.mode === 'rotating') {
       this.handleRotate(worldX, worldY, sceneGraph, selectionStore.getState().selectedIds);
       this.engine.render();
+    } else if (this.mode === 'arrow-edit' && this.activeHandle) {
+      const selectedId = (Array.from(selectionStore.getState().selectedIds) as string[])[0];
+      const arrow = sceneGraph.getById(selectedId) as any;
+      if (!arrow) return;
+
+      if (this.activeHandle.type === 'arrow-mid') {
+        const [p1, p2] = resolveArrowEndpoints(arrow, (id) => sceneGraph.getById(id));
+        const lineStyle = arrow.lineStyle ?? 'straight';
+        
+        let newBend = 0;
+        const mx = (p1.x + p2.x) / 2;
+        const my = (p1.y + p2.y) / 2;
+
+        if (lineStyle === 'elbow') {
+          const dx = Math.abs(p2.x - p1.x);
+          const dy = Math.abs(p2.y - p1.y);
+          if (dx > dy) {
+            newBend = worldX - mx;
+          } else {
+            newBend = worldY - my;
+          }
+        } else {
+          const dx = p2.x - p1.x;
+          const dy = p2.y - p1.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const nx = -dy / dist;
+          const ny = dx / dist;
+          newBend = (worldX - mx) * nx + (worldY - my) * ny;
+        }
+
+        // Snap to straight
+        if (Math.abs(newBend) < 15 / e.canvasStore.getState().camera.zoom) {
+          newBend = 0;
+        }
+        
+        sceneGraph.update(arrow.id, { bend: newBend });
+      } else {
+        // Dragging p1 or p2 -> snap to shapes
+        const isStart = this.activeHandle.type === 'arrow-start';
+        const snapRadius = 48 / e.canvasStore.getState().camera.zoom;
+        const shapes = sceneGraph.getElements() as Shape[];
+        const targetShape = findHoveredShape(shapes.filter(s => s.id !== arrow.id), { x: worldX, y: worldY }, snapRadius);
+        
+        let newX = worldX;
+        let newY = worldY;
+        let newShapeId = null;
+        let newAnchor = null;
+
+        if (targetShape) {
+          ArrowHoverOverlay.hoveredShapeId = targetShape.id;
+          const anchor = getNearestAnchorOnShape(targetShape, { x: worldX, y: worldY });
+          ArrowHoverOverlay.nearestAnchor = anchor;
+          const snapped = getShapeConnectionPoint(targetShape, anchor);
+          newX = snapped.x;
+          newY = snapped.y;
+          newShapeId = targetShape.id;
+          newAnchor = anchor;
+        } else {
+          ArrowHoverOverlay.hoveredShapeId = null;
+          ArrowHoverOverlay.nearestAnchor = null;
+        }
+
+        const pts = [...arrow.points];
+        if (isStart) pts[0] = { x: newX, y: newY };
+        else pts[pts.length - 1] = { x: newX, y: newY };
+
+        const updates: any = { points: pts };
+        if (isStart) {
+          updates.startShapeId = newShapeId;
+          updates.startAnchor = newAnchor;
+        } else {
+          updates.endShapeId = newShapeId;
+          updates.endAnchor = newAnchor;
+        }
+
+        // Update bounding box
+        const [p1, p2] = resolveArrowEndpoints({ ...arrow, ...updates }, (id) => sceneGraph.getById(id));
+        updates.x = Math.min(p1.x, p2.x);
+        updates.y = Math.min(p1.y, p2.y);
+        updates.width = Math.abs(p2.x - p1.x);
+        updates.height = Math.abs(p2.y - p1.y);
+
+        sceneGraph.update(arrow.id, updates);
+      }
+      this.engine.render();
     }
   }
 
@@ -128,6 +253,8 @@ export class SelectionTool extends BaseTool {
     this.mode = 'idle';
     this.initialPositions.clear();
     this.activeHandle = null;
+    ArrowHoverOverlay.hoveredShapeId = null;
+    ArrowHoverOverlay.nearestAnchor = null;
     this.engine.render();
   }
 
@@ -143,6 +270,7 @@ export class SelectionTool extends BaseTool {
           rotation: s.rotation ?? 0,
           fontSize: (s as any).fontSize,
           points: (s as any).points ? JSON.parse(JSON.stringify((s as any).points)) : undefined,
+          bend: (s as any).bend,
         });
       }
     });
@@ -174,7 +302,26 @@ export class SelectionTool extends BaseTool {
 
     const elements = sceneGraph.getElements();
     const singleShape = selectedIds.size === 1 ? elements.find((s: Shape) => selectedIds.has(s.id)) : null;
-    const isSingleRotatable = singleShape && singleShape.type !== 'pen' && singleShape.type !== 'line' && singleShape.type !== 'arrow';
+
+    if (singleShape && singleShape.type === 'arrow') {
+      const arrow = singleShape as any;
+      const [p1, p2] = resolveArrowEndpoints(arrow, (id) => sceneGraph.getById(id));
+      const mid = getArrowMidPoint(p1, p2, arrow.lineStyle ?? 'straight', arrow.bend ?? 0);
+
+      const arrowHandles: Array<{ type: ResizeHandle; wx: number; wy: number }> = [
+        { type: 'arrow-start', wx: p1.x, wy: p1.y },
+        { type: 'arrow-end',   wx: p2.x, wy: p2.y },
+        { type: 'arrow-mid',   wx: mid.x, wy: mid.y },
+      ];
+      for (const h of arrowHandles) {
+        if (Math.abs(worldX - h.wx) < hSize && Math.abs(worldY - h.wy) < hSize) {
+          return { type: h.type };
+        }
+      }
+      return null;
+    }
+
+    const isSingleRotatable = singleShape && singleShape.type !== 'pen' && singleShape.type !== 'line';
 
     let testX = worldX;
     let testY = worldY;
@@ -239,12 +386,12 @@ export class SelectionTool extends BaseTool {
     let newH = this.initialBBox.h;
 
     switch (type) {
-      case 'tl': newX = testX; newY = testY; newW = originX - testX; newH = originY - testY; break;
-      case 'tc': newY = testY; newH = originY - testY; break;
-      case 'tr': newY = testY; newW = testX - this.initialBBox.x; newH = originY - testY; break;
-      case 'ml': newX = testX; newW = originX - testX; break;
+      case 'tl': newX = testX; newY = testY; newW = originX! - testX; newH = originY! - testY; break;
+      case 'tc': newY = testY; newH = originY! - testY; break;
+      case 'tr': newY = testY; newW = testX - this.initialBBox.x; newH = originY! - testY; break;
+      case 'ml': newX = testX; newW = originX! - testX; break;
       case 'mr': newW = testX - this.initialBBox.x; break;
-      case 'bl': newX = testX; newW = originX - testX; newH = testY - this.initialBBox.y; break;
+      case 'bl': newX = testX; newW = originX! - testX; newH = testY - this.initialBBox.y; break;
       case 'bc': newH = testY - this.initialBBox.y; break;
       case 'br': newW = testX - this.initialBBox.x; newH = testY - this.initialBBox.y; break;
     }

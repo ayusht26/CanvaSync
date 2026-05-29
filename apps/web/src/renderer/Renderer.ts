@@ -5,6 +5,7 @@ import { GridRenderer } from './GridRenderer.js';
 import { ShapeRenderer } from './ShapeRenderer.js';
 import { CursorRenderer } from './CursorRenderer.js';
 import { SelectionRenderer } from './SelectionRenderer.js';
+import { ArrowHoverOverlay } from './ArrowHoverOverlay.js';
 import { useSelectionStore } from '../store/useSelectionStore.js';
 import { useCanvasStore } from '../store/useCanvasStore.js';
 import { ToolName } from '@canvasync/shared';
@@ -36,7 +37,13 @@ export class Renderer {
 
     // Draw Shapes
     for (const shape of elements) {
-      ShapeRenderer.draw(ctx, shape);
+      ShapeRenderer.draw(ctx, shape, (id) => sceneGraph.getById(id));
+    }
+
+    // Arrow tool hover overlay (world-space)
+    const { activeTool } = useCanvasStore.getState();
+    if (activeTool === ToolName.ARROW) {
+      ArrowHoverOverlay.draw(ctx, camera, elements);
     }
 
     // Restore state (remove camera transform)
@@ -49,7 +56,6 @@ export class Renderer {
     CursorRenderer.draw(ctx, collaborators, camera);
 
     // Draw eraser cursor overlay
-    const { activeTool } = useCanvasStore.getState();
     if (activeTool === ToolName.ERASER) {
       this.drawEraserCursor(ctx, camera);
     }

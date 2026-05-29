@@ -21,13 +21,42 @@ import { ArrowTool } from '../tools/ArrowTool.js';
 import { TextTool } from '../tools/TextTool.js';
 import { EraserTool } from '../tools/EraserTool.js';
 
+const CAMERA_KEY = 'canvasync-camera';
+
+function loadSavedCamera(): { x: number; y: number; zoom: number } | null {
+  try {
+    const raw = localStorage.getItem(CAMERA_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed.x === 'number' &&
+      typeof parsed.y === 'number' &&
+      typeof parsed.zoom === 'number'
+    ) return parsed;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 export const useCanvas = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const toolManagerRef = useRef<ToolManager | null>(null);
   const engineRef = useRef<CanvasEngine | null>(null);
   const sceneGraphRef = useRef<SceneGraph | null>(null);
 
-  const camera = useMemo(() => new Camera(), []);
+  const camera = useMemo(() => {
+    const cam = new Camera();
+    // Restore camera position immediately so the first render lands in the right place
+    const saved = loadSavedCamera();
+    if (saved) {
+      cam.x = saved.x;
+      cam.y = saved.y;
+      cam.zoom = saved.zoom;
+    }
+    return cam;
+  }, []);
+
   const sceneGraph = useMemo(() => new SceneGraph(), []);
   sceneGraphRef.current = sceneGraph;
 
@@ -61,9 +90,14 @@ export const useCanvas = () => {
     // Register sceneGraph globally so keyboard/UI can mutate it directly
     SceneGraphService.set(sceneGraph);
     sceneGraph.setShapes(useShapeStore.getState().elements);
+
+    // Sync the restored camera into the Zustand store so TopBar zoom % is correct
+    useCanvasStore.getState().updateCamera({ x: camera.x, y: camera.y, zoom: camera.zoom });
+
     engine.start();
 
     // Sync Zustand camera store → Camera class (for zoom button clicks)
+    let cameraSaveTimer: ReturnType<typeof setTimeout> | null = null;
     const unsub = useCanvasStore.subscribe((state) => {
       const c = state.camera;
       if (camera.x !== c.x || camera.y !== c.y || camera.zoom !== c.zoom) {
@@ -72,6 +106,11 @@ export const useCanvas = () => {
         camera.zoom = c.zoom;
         engine.render();
       }
+      // Debounced save to localStorage
+      if (cameraSaveTimer) clearTimeout(cameraSaveTimer);
+      cameraSaveTimer = setTimeout(() => {
+        localStorage.setItem(CAMERA_KEY, JSON.stringify({ x: c.x, y: c.y, zoom: c.zoom }));
+      }, 500);
     });
 
     // Sync SceneGraph → shape store on changes
@@ -80,6 +119,7 @@ export const useCanvas = () => {
     });
 
     return () => {
+      if (cameraSaveTimer) clearTimeout(cameraSaveTimer);
       engine.destroy();
       eventHandler.cleanup();
       unsub();
@@ -97,3 +137,4 @@ export const useCanvas = () => {
 
   return { canvasRef, camera, sceneGraph };
 };
+

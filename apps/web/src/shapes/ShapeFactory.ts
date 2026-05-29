@@ -79,7 +79,10 @@ export class ShapeFactory {
           ...base, 
           type: 'arrow', 
           points: [{ x, y }, { x, y }],
-          arrowHead: 'arrow'
+          lineStyle: (styles as any).arrowLineStyle ?? 'straight',
+          startArrowHead: (styles as any).arrowStartHead ?? 'none',
+          endArrowHead: (styles as any).arrowEndHead ?? 'arrow',
+          arrowHead: 'arrow', // backward compatibility
         };
       case 'text':
         return {

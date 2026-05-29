@@ -24,6 +24,13 @@ export default {
         },
         destructive: 'var(--destructive)',
         success: 'var(--success)',
+        // Flat shadcn tokens used by installed components (Slider, Button, etc.)
+        muted: 'var(--muted)',
+        primary: 'var(--primary)',
+        foreground: 'var(--foreground)',
+        ring: 'var(--ring)',
+        input: 'var(--input)',
+        popover: 'var(--popover)',
       },
       fontFamily: {
         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],

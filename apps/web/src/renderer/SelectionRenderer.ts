@@ -1,5 +1,6 @@
 import { Camera } from '../canvas/Camera.js';
 import { BoundingBox, Shape } from '@canvasync/shared';
+import { getArrowMidPoint } from '../canvas/ArrowConnections.js';
 
 export class SelectionRenderer {
   static draw(
@@ -49,12 +50,60 @@ export class SelectionRenderer {
     const boxH = (maxY - minY) + padding * 2;
 
     const singleShape = selectedElements[0];
-    const isSingleRotatable = selectedIds.size === 1 && singleShape.type !== 'pen' && singleShape.type !== 'line' && singleShape.type !== 'arrow';
+    const isSingleArrow = selectedIds.size === 1 && singleShape.type === 'arrow';
 
     ctx.save();
     // Apply camera transform to draw in world space
     const dpr = window.devicePixelRatio || 1;
     ctx.setTransform(camera.zoom * dpr, 0, 0, camera.zoom * dpr, camera.x * dpr, camera.y * dpr);
+
+    if (isSingleArrow) {
+      // 2A. Custom handles for a single selected arrow
+      const arrow = singleShape as any;
+      
+      // We need resolveArrowEndpoints. Rather than importing it directly here to avoid circular/deep deps,
+      // we can compute it since we have `elements`.
+      let p1 = arrow.points[0];
+      let p2 = arrow.points[arrow.points.length - 1];
+      
+      // Inline simple resolution if connected
+      if (arrow.startShapeId && arrow.startAnchor) {
+        const src = elements.find(e => e.id === arrow.startShapeId);
+        if (src) p1 = { x: src.x + arrow.startAnchor.rx * src.width, y: src.y + arrow.startAnchor.ry * src.height };
+      }
+      if (arrow.endShapeId && arrow.endAnchor) {
+        const dst = elements.find(e => e.id === arrow.endShapeId);
+        if (dst) p2 = { x: dst.x + arrow.endAnchor.rx * dst.width, y: dst.y + arrow.endAnchor.ry * dst.height };
+      }
+
+      const mid = getArrowMidPoint(p1, p2, arrow.lineStyle ?? 'straight', arrow.bend ?? 0);
+
+      const handleSize = 8 / camera.zoom;
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#6366f1';
+      ctx.lineWidth = 1.5 / camera.zoom;
+
+      // Draw p1, midPoint, p2 handles (circles)
+      [p1, mid, p2].forEach((h, i) => {
+        ctx.beginPath();
+        if (i === 1) {
+          // Midpoint is a diamond or smaller circle to distinguish
+          const r = 4 / camera.zoom;
+          ctx.arc(h.x, h.y, r, 0, Math.PI * 2);
+        } else {
+          // Endpoints are circles
+          const r = 5 / camera.zoom;
+          ctx.arc(h.x, h.y, r, 0, Math.PI * 2);
+        }
+        ctx.fill();
+        ctx.stroke();
+      });
+
+      ctx.restore();
+      return;
+    }
+
+    const isSingleRotatable = selectedIds.size === 1 && singleShape.type !== 'pen' && singleShape.type !== 'line' && singleShape.type !== 'arrow';
 
     if (isSingleRotatable && singleShape.rotation) {
       const cx = singleShape.x + singleShape.width / 2;

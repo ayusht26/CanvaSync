@@ -50,18 +50,18 @@ export const AnimatedThemeToggler: React.FC<AnimatedThemeTogglerProps> = ({
     });
 
     transition.ready.then(() => {
+      // Both directions use the same expanding circle on ::view-transition-new(root).
+      // This produces the same sweeping-in animation regardless of direction.
       const clipPath = [
         `circle(0px at ${x}px ${y}px)`,
         `circle(${endRadius}px at ${x}px ${y}px)`,
       ];
       document.documentElement.animate(
-        {
-          clipPath: isDark ? [...clipPath].reverse() : clipPath,
-        },
+        { clipPath },
         {
           duration,
           easing: 'ease-in-out',
-          pseudoElement: isDark ? '::view-transition-old(root)' : '::view-transition-new(root)',
+          pseudoElement: '::view-transition-new(root)',
         }
       );
     });

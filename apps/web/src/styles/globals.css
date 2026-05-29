@@ -180,3 +180,173 @@ html[data-magicui-theme-vt="active"]::view-transition-group(root) {
 .animate-slide-left { animation: slideInFromLeft 0.25s cubic-bezier(0.16,1,0.3,1) forwards; }
 .animate-slide-bottom { animation: slideInFromBottom 0.2s cubic-bezier(0.16,1,0.3,1) forwards; }
 .animate-scale-in { animation: scaleIn 0.2s cubic-bezier(0.16,1,0.3,1) forwards; }
+
+/* ─── Alert Dialog ──────────────────────────────────────────────────────── */
+@keyframes alertOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes alertOverlayOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes alertContentIn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes alertContentOut {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+}
+
+.alert-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.alert-dialog-overlay[data-state="open"]  { animation: alertOverlayIn  200ms cubic-bezier(0.16,1,0.3,1) forwards; }
+.alert-dialog-overlay[data-state="closed"]{ animation: alertOverlayOut 180ms cubic-bezier(0.16,1,0.3,1) forwards; }
+
+.alert-dialog-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 201;
+  width: calc(100% - 2rem);
+  max-width: 420px;
+  transform: translate(-50%, -50%);
+  border-radius: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 80px rgba(0,0,0,0.35), 0 8px 24px rgba(0,0,0,0.2);
+  padding: 24px;
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.alert-dialog-content[data-state="open"]  { animation: alertContentIn  250ms cubic-bezier(0.16,1,0.3,1) forwards; }
+.alert-dialog-content[data-state="closed"]{ animation: alertContentOut 200ms cubic-bezier(0.16,1,0.3,1) forwards; }
+
+.alert-dialog-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.alert-dialog-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+}
+
+.alert-dialog-description {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.alert-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Shared button base */
+.alert-dialog-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background 120ms ease, color 120ms ease, transform 80ms ease, box-shadow 120ms ease;
+  outline: none;
+  user-select: none;
+  white-space: nowrap;
+}
+.alert-dialog-btn:active { transform: translateY(1px) scale(0.98); }
+
+/* Cancel — ghost style */
+.alert-dialog-btn-cancel {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+.alert-dialog-btn-cancel:hover {
+  background: var(--bg-surface);
+}
+
+/* Action — accent style */
+.alert-dialog-btn-action {
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 2px 8px var(--accent-glow);
+}
+.alert-dialog-btn-action:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 4px 12px var(--accent-glow);
+}
+
+/* ─── Tool Tooltip — delayed appearance prevents flickering on fast passes ─ */
+.group:hover .group-hover\:opacity-100 {
+  transition-delay: 400ms;
+}
+
+/* ─── Shadcn Slider — explicit classes, no data-attribute Tailwind variants ─ */
+.slider-root {
+  position: relative;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  touch-action: none;
+  user-select: none;
+}
+.slider-root[data-disabled] { opacity: 0.5; pointer-events: none; }
+
+.slider-track {
+  position: relative;
+  flex-grow: 1;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: var(--bg-elevated);
+}
+
+.slider-range {
+  position: absolute;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 9999px;
+}
+
+.slider-thumb {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #ffffff;
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: box-shadow 120ms ease;
+  outline: none;
+}
+.slider-thumb:hover {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.slider-thumb:focus-visible {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent);
+}

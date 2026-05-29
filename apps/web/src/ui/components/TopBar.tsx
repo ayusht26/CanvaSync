@@ -10,6 +10,18 @@ import { useRoomStore } from '../../store/useRoomStore.js';
 import { AnimatedThemeToggler } from './AnimatedThemeToggler.js';
 import { ToolName } from '@canvasync/shared';
 import { SceneGraphService } from '../../canvas/SceneGraphService.js';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '../../components/ui/alert-dialog.js';
+import { BackgroundPicker } from './BackgroundPicker.js';
 
 interface TopBarProps {
   onShareClick?: () => void;
@@ -128,7 +140,6 @@ export const TopBar: React.FC<TopBarProps> = ({ onShareClick, canvasName = 'Unti
                 <div key={id} className="relative group">
                   <button
                     onClick={() => setActiveTool(id as ToolName)}
-                    title={`${label} (${shortcut})`}
                     className="w-8 h-8 flex items-center justify-center rounded-lg transition-all duration-100 active:scale-90"
                     style={{
                       background: isActive ? 'var(--accent)' : 'transparent',
@@ -212,6 +223,11 @@ export const TopBar: React.FC<TopBarProps> = ({ onShareClick, canvasName = 'Unti
 
       <div className="mx-0.5 h-5 w-px flex-shrink-0" style={{ background: 'var(--border)' }} />
 
+      {/* BACKGROUND PICKER */}
+      <BackgroundPicker />
+
+      <div className="mx-0.5 h-5 w-px flex-shrink-0" style={{ background: 'var(--border)' }} />
+
       {/* COLLABORATORS */}
       {collaborators.size > 0 && (
         <div className="flex -space-x-1.5 flex-shrink-0">
@@ -229,22 +245,37 @@ export const TopBar: React.FC<TopBarProps> = ({ onShareClick, canvasName = 'Unti
       )}
 
       {/* RESET CANVAS */}
-      <button
-        onClick={() => {
-          if (window.confirm("Are you sure you want to reset the entire canvas? This cannot be undone.")) {
-            SceneGraphService.get()?.clear();
-          }
-        }}
-        className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-all active:scale-95 hover:bg-[var(--bg-elevated)]"
-        style={{
-          border: '1.5px solid var(--border)',
-          color: 'var(--text-primary)',
-        }}
-        title="Reset Canvas"
-      >
-        <Trash2 size={13} />
-        <span className="hidden sm:inline">Reset</span>
-      </button>
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <button
+            className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-all active:scale-95 hover:bg-[var(--bg-elevated)]"
+            style={{
+              border: '1.5px solid var(--border)',
+              color: 'var(--text-primary)',
+            }}
+            title="Reset Canvas"
+          >
+            <Trash2 size={13} />
+            <span className="hidden sm:inline">Reset</span>
+          </button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset the canvas?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently erase all shapes and drawings on this canvas. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => SceneGraphService.get()?.clear()}
+            >
+              Reset Canvas
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* THEME TOGGLE */}
       <AnimatedThemeToggler

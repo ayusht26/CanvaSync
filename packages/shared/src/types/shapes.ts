@@ -69,6 +69,19 @@ export interface ArrowShape extends BaseShape {
   points: Point[];
   startShapeId?: string;
   endShapeId?: string;
+  /** 0-1 relative position on connected start shape */
+  startAnchor?: { rx: number; ry: number };
+  /** 0-1 relative position on connected end shape */
+  endAnchor?: { rx: number; ry: number };
+  /** Routing mode */
+  lineStyle?: 'straight' | 'elbow';
+  /** Arrowhead at start (p1) */
+  startArrowHead?: 'none' | 'arrow';
+  /** Arrowhead at end (p2) */
+  endArrowHead?: 'none' | 'arrow';
+  /** World coordinate of the control point for bezier curve or elbow offset */
+  bend?: number;
+  /** @deprecated use endArrowHead instead */
   arrowHead?: 'arrow' | 'dot' | 'none';
 }
 

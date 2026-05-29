@@ -6,6 +6,7 @@ import { useCanvasStore } from '../../store/useCanvasStore.js';
 import { StrokeStyle, ToolName } from '@canvasync/shared';
 import { SceneGraphService } from '../../canvas/SceneGraphService.js';
 import { ColorPicker } from '../../components/ui/color-picker.js';
+import { Slider } from '../../components/ui/slider.js';
 import {
   ArrowUpToLine, ArrowDownToLine, ArrowUp, ArrowDown, Trash2, AlignLeft, AlignCenter, AlignRight
 } from 'lucide-react';
@@ -66,7 +67,16 @@ interface StylePanelProps {
 
 export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
   const { selectedIds } = useSelectionStore();
-  const { strokeColor, setStrokeColor, fillColor, setFillColor, strokeWidth, setStrokeWidth, opacity, setOpacity, strokeStyle, setStrokeStyle } = useStyleStore();
+  const { 
+    strokeColor, setStrokeColor, 
+    fillColor, setFillColor, 
+    strokeWidth, setStrokeWidth, 
+    opacity, setOpacity, 
+    strokeStyle, setStrokeStyle,
+    arrowLineStyle, setArrowLineStyle,
+    arrowStartHead, setArrowStartHead,
+    arrowEndHead, setArrowEndHead,
+  } = useStyleStore();
   const { updateShape, removeShape } = useShapeStore();
   const elements = useShapeStore(state => state.elements);
   const { activeTool } = useCanvasStore();
@@ -117,8 +127,12 @@ export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
     activeTool === ToolName.TEXT ||                             
     activeTool === ToolName.ERASER;                             
 
+  const areAllSelectedNonFillable = selectedIds.size > 0 && elements
+    .filter(el => selectedIds.has(el.id))
+    .every(el => el.type === 'line' || el.type === 'arrow' || el.type === 'pen');
+
   const showFill = SHAPE_TOOLS.includes(activeTool as any) || 
-    (isSelectionToolActive && selectedIds.size > 0);
+    (isSelectionToolActive && selectedIds.size > 0 && !areAllSelectedNonFillable);
 
   const isTextContext = activeTool === ToolName.TEXT || 
     (selectedIds.size > 0 && elements.find(el => selectedIds.has(el.id) && el.type === 'text'));
@@ -402,15 +416,87 @@ export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
                   {Math.round(opacity * 100)}%
                 </span>
               </div>
-              <input
-                type="range"
-                min="0" max="1" step="0.05"
-                value={opacity}
-                onChange={(e) => applyStyle({ opacity: parseFloat(e.target.value) })}
-                className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
-                style={{ accentColor: 'var(--accent)' }}
+              <Slider
+                min={0}
+                max={1}
+                step={0.05}
+                value={[opacity]}
+                onValueChange={([val]) => applyStyle({ opacity: val })}
+                className="w-full"
               />
             </section>
+
+            {/* ── Arrow-specific controls ──────────────────────────────── */}
+            {(activeTool === ToolName.ARROW || (selectedIds.size > 0 && elements.some(el => selectedIds.has(el.id) && el.type === 'arrow'))) && (
+              <>
+                <section>
+                  <SectionLabel>Routing</SectionLabel>
+                  <div className="flex gap-1">
+                    {(['straight', 'elbow'] as const).map(style => {
+                      const isActive = (() => {
+                        if (selectedIds.size > 0) {
+                          const sel = elements.find(el => selectedIds.has(el.id) && el.type === 'arrow');
+                          return sel ? (sel as any).lineStyle === style : style === arrowLineStyle;
+                        }
+                        return style === arrowLineStyle;
+                      })();
+                      return (
+                        <button key={style}
+                          onClick={() => {
+                            setArrowLineStyle(style);
+                            const sg = SceneGraphService.get();
+                            if (sg && selectedIds.size > 0) {
+                              selectedIds.forEach(id => sg.update(id, { lineStyle: style } as any));
+                            }
+                          }}
+                          className="flex-1 py-1.5 rounded-lg text-xs font-medium transition-all"
+                          style={{ background: isActive ? 'var(--accent)' : 'var(--bg-elevated)', color: isActive ? '#fff' : 'var(--text-secondary)' }}
+                        >
+                          {style === 'straight' ? '╱ Straight' : '⌐ Elbow'}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section>
+                  <SectionLabel>Arrow Head</SectionLabel>
+                  <div className="flex gap-1">
+                    {([
+                      { label: '→', startArrowHead: 'none',  endArrowHead: 'arrow', title: 'End only' },
+                      { label: '←', startArrowHead: 'arrow', endArrowHead: 'none',  title: 'Start only' },
+                      { label: '↔', startArrowHead: 'arrow', endArrowHead: 'arrow', title: 'Both ends' },
+                      { label: '—', startArrowHead: 'none',  endArrowHead: 'none',  title: 'None' },
+                    ] as const).map(opt => {
+                      const isActive = (() => {
+                        if (selectedIds.size > 0) {
+                          const sel = elements.find(el => selectedIds.has(el.id) && el.type === 'arrow') as any;
+                          if (sel) return (sel.startArrowHead ?? 'none') === opt.startArrowHead && (sel.endArrowHead ?? 'arrow') === opt.endArrowHead;
+                        }
+                        return arrowStartHead === opt.startArrowHead && arrowEndHead === opt.endArrowHead;
+                      })();
+                      return (
+                        <button key={opt.label}
+                          title={opt.title}
+                          onClick={() => {
+                            setArrowStartHead(opt.startArrowHead);
+                            setArrowEndHead(opt.endArrowHead);
+                            const sg = SceneGraphService.get();
+                            if (sg && selectedIds.size > 0) {
+                              selectedIds.forEach(id => sg.update(id, { startArrowHead: opt.startArrowHead, endArrowHead: opt.endArrowHead } as any));
+                            }
+                          }}
+                          className="flex-1 py-1.5 rounded-lg text-sm font-medium transition-all"
+                          style={{ background: isActive ? 'var(--accent)' : 'var(--bg-elevated)', color: isActive ? '#fff' : 'var(--text-secondary)' }}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              </>
+            )}
           </>
         )}
 

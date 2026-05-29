@@ -14,6 +14,14 @@ interface StyleState {
   setStrokeWidth: (width: number) => void;
   setOpacity: (opacity: number) => void;
   setStrokeStyle: (style: StrokeStyle) => void;
+  
+  arrowLineStyle: 'straight' | 'elbow';
+  arrowStartHead: 'none' | 'arrow';
+  arrowEndHead: 'none' | 'arrow';
+
+  setArrowLineStyle: (style: 'straight' | 'elbow') => void;
+  setArrowStartHead: (head: 'none' | 'arrow') => void;
+  setArrowEndHead: (head: 'none' | 'arrow') => void;
 }
 
 export const useStyleStore = create<StyleState>((set) => ({
@@ -28,4 +36,12 @@ export const useStyleStore = create<StyleState>((set) => ({
   setStrokeWidth: (strokeWidth) => set({ strokeWidth }),
   setOpacity: (opacity) => set({ opacity }),
   setStrokeStyle: (strokeStyle) => set({ strokeStyle }),
+  
+  arrowLineStyle: 'straight',
+  arrowStartHead: 'none',
+  arrowEndHead: 'arrow',
+
+  setArrowLineStyle: (arrowLineStyle) => set({ arrowLineStyle }),
+  setArrowStartHead: (arrowStartHead) => set({ arrowStartHead }),
+  setArrowEndHead: (arrowEndHead) => set({ arrowEndHead }),
 }));

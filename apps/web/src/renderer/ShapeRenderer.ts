@@ -9,7 +9,11 @@ import { ArrowRenderer } from './shapes/ArrowRenderer.js';
 import { TextRenderer } from './shapes/TextRenderer.js';
 
 export class ShapeRenderer {
-  static draw(ctx: CanvasRenderingContext2D, shape: Shape) {
+  static draw(
+    ctx: CanvasRenderingContext2D,
+    shape: Shape,
+    getShapeById?: (id: string) => Shape | undefined
+  ) {
     ctx.save();
     ctx.globalAlpha = shape.opacity ?? 1;
 
@@ -28,7 +32,7 @@ export class ShapeRenderer {
       case 'triangle':  TriangleRenderer.draw(ctx, shape as any); break;
       case 'rhombus':   RhombusRenderer.draw(ctx, shape as any); break;
       case 'line':      LineRenderer.draw(ctx, shape as any); break;
-      case 'arrow':     ArrowRenderer.draw(ctx, shape as any); break;
+      case 'arrow':     ArrowRenderer.draw(ctx, shape as any, getShapeById); break;
       case 'text':      TextRenderer.draw(ctx, shape as any); break;
       default:
         console.warn('No renderer for:', (shape as any).type);
