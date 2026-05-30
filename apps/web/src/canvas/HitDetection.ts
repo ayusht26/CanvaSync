@@ -15,6 +15,7 @@ export class HitDetection {
       case 'triangle':
       case 'rhombus':
       case 'text':
+      case 'image':
         return (
           rotatedPoint.x >= shape.x &&
           rotatedPoint.x <= shape.x + shape.width &&

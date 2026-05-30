@@ -7,6 +7,7 @@ import { RhombusRenderer } from './shapes/RhombusRenderer.js';
 import { LineRenderer } from './shapes/LineRenderer.js';
 import { ArrowRenderer } from './shapes/ArrowRenderer.js';
 import { TextRenderer } from './shapes/TextRenderer.js';
+import { ImageRenderer } from './shapes/ImageRenderer.js';
 
 export class ShapeRenderer {
   static draw(
@@ -34,6 +35,7 @@ export class ShapeRenderer {
       case 'line':      LineRenderer.draw(ctx, shape as any); break;
       case 'arrow':     ArrowRenderer.draw(ctx, shape as any, getShapeById); break;
       case 'text':      TextRenderer.draw(ctx, shape as any); break;
+      case 'image':     ImageRenderer.draw(ctx, shape as any); break;
       default:
         console.warn('No renderer for:', (shape as any).type);
     }

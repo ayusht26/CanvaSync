@@ -9,6 +9,7 @@ import { RoomPanel } from '../ui/components/RoomPanel.js';
 import { useResize } from '../hooks/useResize.js';
 import { useRoomStore } from '../store/useRoomStore.js';
 import { useCanvasStore } from '../store/useCanvasStore.js';
+import { HistoryControls } from '../ui/components/HistoryControls.js';
 import { ToolName } from '@canvasync/shared';
 
 const LS_NAME_KEY = 'canvasync-user-name';
@@ -84,6 +85,7 @@ const RoomCanvas: React.FC = () => {
       <TopBar />
       <StylePanel sceneGraph={sceneGraph} />
       <RoomPanel />
+      <HistoryControls />
 
       <canvas
         ref={canvasRef}

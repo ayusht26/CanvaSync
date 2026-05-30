@@ -10,6 +10,7 @@ import { CreateRoomModal } from '../ui/components/CreateRoomModal.js';
 import { RoomManager } from '../multiplayer/RoomManager.js';
 import { useResize } from '../hooks/useResize.js';
 import { usePersistence } from '../hooks/usePersistence.js';
+import { HistoryControls } from '../ui/components/HistoryControls.js';
 
 const LocalCanvas: React.FC = () => {
   const { canvasRef, sceneGraph } = useCanvas();
@@ -53,6 +54,7 @@ const LocalCanvas: React.FC = () => {
         onNameChange={setCanvasName}
       />
       <StylePanel sceneGraph={sceneGraph} />
+      <HistoryControls />
 
       {/* Main Canvas */}
       <canvas

@@ -6,7 +6,8 @@ export type ShapeType =
   | 'line'
   | 'arrow'
   | 'pen'
-  | 'text';
+  | 'text'
+  | 'image';
 
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
 
@@ -99,6 +100,11 @@ export interface TextShape extends BaseShape {
   textColor?: string;
 }
 
+export interface ImageShape extends BaseShape {
+  type: 'image';
+  dataUrl: string;
+}
+
 export type Shape =
   | RectangleShape
   | EllipseShape
@@ -107,4 +113,5 @@ export type Shape =
   | LineShape
   | ArrowShape
   | PenShape
-  | TextShape;
+  | TextShape
+  | ImageShape;

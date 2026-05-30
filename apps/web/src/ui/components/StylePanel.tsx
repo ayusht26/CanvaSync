@@ -5,6 +5,7 @@ import { useShapeStore } from '../../store/useShapeStore.js';
 import { useCanvasStore } from '../../store/useCanvasStore.js';
 import { StrokeStyle, ToolName } from '@canvasync/shared';
 import { SceneGraphService } from '../../canvas/SceneGraphService.js';
+import { useHistoryStore } from '../../store/useHistoryStore.js';
 import { ColorPicker } from '../../components/ui/color-picker.js';
 import { Slider } from '../../components/ui/slider.js';
 import {
@@ -92,19 +93,34 @@ export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
     setFontFamilyState(f);
     (window as any).__textFontFamily = f;
     const sg = SceneGraphService.get();
-    selectedIds.forEach(id => sg ? sg.update(id, { fontFamily: f } as any) : updateShape(id, { fontFamily: f } as any));
+    if (sg) {
+      useHistoryStore.getState().recordState(sg.getElements());
+      selectedIds.forEach(id => sg.update(id, { fontFamily: f } as any));
+    } else {
+      selectedIds.forEach(id => updateShape(id, { fontFamily: f } as any));
+    }
   };
   const setFontSize = (s: number) => {
     setFontSizeState(s);
     (window as any).__textFontSize = s;
     const sg = SceneGraphService.get();
-    selectedIds.forEach(id => sg ? sg.update(id, { fontSize: s } as any) : updateShape(id, { fontSize: s } as any));
+    if (sg) {
+      useHistoryStore.getState().recordState(sg.getElements());
+      selectedIds.forEach(id => sg.update(id, { fontSize: s } as any));
+    } else {
+      selectedIds.forEach(id => updateShape(id, { fontSize: s } as any));
+    }
   };
   const setTextAlign = (a: 'left'|'center'|'right') => {
     setTextAlignState(a);
     (window as any).__textAlign = a;
     const sg = SceneGraphService.get();
-    selectedIds.forEach(id => sg ? sg.update(id, { textAlign: a } as any) : updateShape(id, { textAlign: a } as any));
+    if (sg) {
+      useHistoryStore.getState().recordState(sg.getElements());
+      selectedIds.forEach(id => sg.update(id, { textAlign: a } as any));
+    } else {
+      selectedIds.forEach(id => updateShape(id, { textAlign: a } as any));
+    }
   };
 
   const setEraserMode = (m: 'element'|'partial') => {
@@ -119,13 +135,18 @@ export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
   const SHAPE_TOOLS = [ToolName.RECTANGLE, ToolName.ELLIPSE, ToolName.TRIANGLE, ToolName.RHOMBUS];
   const DRAW_TOOLS = [ToolName.PEN, ToolName.LINE, ToolName.ARROW];
   
+  const hasSelectedImage = selectedIds.size > 0 && elements
+    .some(el => selectedIds.has(el.id) && el.type === 'image');
+
   const isSelectionToolActive = activeTool === ToolName.SELECTION;
   const isVisible = 
-    (isSelectionToolActive && selectedIds.size > 0) ||          
-    SHAPE_TOOLS.includes(activeTool as any) ||                  
-    DRAW_TOOLS.includes(activeTool as any) ||                   
-    activeTool === ToolName.TEXT ||                             
-    activeTool === ToolName.ERASER;                             
+    !hasSelectedImage && (
+      (isSelectionToolActive && selectedIds.size > 0) ||          
+      SHAPE_TOOLS.includes(activeTool as any) ||                  
+      DRAW_TOOLS.includes(activeTool as any) ||                   
+      activeTool === ToolName.TEXT ||                             
+      activeTool === ToolName.ERASER
+    );                             
 
   const areAllSelectedNonFillable = selectedIds.size > 0 && elements
     .filter(el => selectedIds.has(el.id))
@@ -147,21 +168,32 @@ export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
     if (updates.strokeStyle !== undefined) setStrokeStyle(updates.strokeStyle);
     // Route updates through SceneGraph (source of truth) for selected shapes
     const sg = SceneGraphService.get();
-    selectedIds.forEach((id) => {
-      if (sg) {
-        sg.update(id, updates as any);
-      } else {
-        updateShape(id, updates as any);
+    if (sg) {
+      if (selectedIds.size > 0) {
+        useHistoryStore.getState().recordState(sg.getElements());
       }
-    });
+      selectedIds.forEach((id) => {
+        sg.update(id, updates as any);
+      });
+    } else {
+      selectedIds.forEach((id) => {
+        updateShape(id, updates as any);
+      });
+    }
   };
 
   const deleteSelected = () => {
     const sg = SceneGraphService.get();
-    selectedIds.forEach((id) => {
-      if (sg) sg.remove(id);
-      else removeShape(id);
-    });
+    if (sg) {
+      useHistoryStore.getState().recordState(sg.getElements());
+      selectedIds.forEach((id) => {
+        sg.remove(id);
+      });
+    } else {
+      selectedIds.forEach((id) => {
+        removeShape(id);
+      });
+    }
     useSelectionStore.getState().clearSelection();
   };
 
@@ -446,6 +478,7 @@ export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
                             setArrowLineStyle(style);
                             const sg = SceneGraphService.get();
                             if (sg && selectedIds.size > 0) {
+                              useHistoryStore.getState().recordState(sg.getElements());
                               selectedIds.forEach(id => sg.update(id, { lineStyle: style } as any));
                             }
                           }}
@@ -458,7 +491,7 @@ export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
                     })}
                   </div>
                 </section>
-
+ 
                 <section>
                   <SectionLabel>Arrow Head</SectionLabel>
                   <div className="flex gap-1">
@@ -483,6 +516,7 @@ export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
                             setArrowEndHead(opt.endArrowHead);
                             const sg = SceneGraphService.get();
                             if (sg && selectedIds.size > 0) {
+                              useHistoryStore.getState().recordState(sg.getElements());
                               selectedIds.forEach(id => sg.update(id, { startArrowHead: opt.startArrowHead, endArrowHead: opt.endArrowHead } as any));
                             }
                           }}
@@ -507,10 +541,34 @@ export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
               <SectionLabel>Layer</SectionLabel>
               <div className="grid grid-cols-4 gap-1">
                 {[
-                  { icon: ArrowUpToLine, label: 'Front', action: () => sceneGraph.bringToFront(selectedId) },
-                  { icon: ArrowUp, label: 'Forward', action: () => sceneGraph.bringForward(selectedId) },
-                  { icon: ArrowDown, label: 'Backward', action: () => sceneGraph.sendBackward(selectedId) },
-                  { icon: ArrowDownToLine, label: 'Back', action: () => sceneGraph.sendToBack(selectedId) },
+                  { icon: ArrowUpToLine, label: 'Front', action: () => {
+                    const sg = SceneGraphService.get();
+                    if (sg) {
+                      useHistoryStore.getState().recordState(sg.getElements());
+                      sceneGraph.bringToFront(selectedId);
+                    }
+                  }},
+                  { icon: ArrowUp, label: 'Forward', action: () => {
+                    const sg = SceneGraphService.get();
+                    if (sg) {
+                      useHistoryStore.getState().recordState(sg.getElements());
+                      sceneGraph.bringForward(selectedId);
+                    }
+                  }},
+                  { icon: ArrowDown, label: 'Backward', action: () => {
+                    const sg = SceneGraphService.get();
+                    if (sg) {
+                      useHistoryStore.getState().recordState(sg.getElements());
+                      sceneGraph.sendBackward(selectedId);
+                    }
+                  }},
+                  { icon: ArrowDownToLine, label: 'Back', action: () => {
+                    const sg = SceneGraphService.get();
+                    if (sg) {
+                      useHistoryStore.getState().recordState(sg.getElements());
+                      sceneGraph.sendToBack(selectedId);
+                    }
+                  }},
                 ].map(({ icon: Icon, label, action }) => (
                   <button
                     key={label}

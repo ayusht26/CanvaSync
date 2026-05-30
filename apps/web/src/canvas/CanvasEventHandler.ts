@@ -9,6 +9,7 @@ import { useSelectionStore } from '../store/useSelectionStore.js';
 import { useStyleStore } from '../store/useStyleStore.js';
 import { useRoomStore } from '../store/useRoomStore.js';
 import { Renderer } from '../renderer/Renderer.js';
+import { useHistoryStore } from '../store/useHistoryStore.js';
 
 export class CanvasEventHandler {
   private canvas: HTMLCanvasElement;
@@ -107,6 +108,10 @@ export class CanvasEventHandler {
       return;
     }
     this.canvas.setPointerCapture(e.pointerId);
+
+    // Save history snapshot before any interactive changes occur!
+    useHistoryStore.getState().recordState(this.sceneGraph.getElements());
+
     const toolEvent = this.createToolEvent(e);
     const activeTool = this.toolManager.getActiveTool();
     if (activeTool) activeTool.onPointerDown(toolEvent);
@@ -145,6 +150,17 @@ export class CanvasEventHandler {
     const toolEvent = this.createToolEvent(e);
     const activeTool = this.toolManager.getActiveTool();
     if (activeTool) activeTool.onPointerUp(toolEvent);
+
+    // Validate the saved snapshot. If the current canvas shape elements are
+    // identical to the snapshot, no change actually occurred (e.g. standard selection click).
+    // In this case, we pop the unused entry off the stack to prevent blank undo actions.
+    const { undoStack, popUndo } = useHistoryStore.getState();
+    if (undoStack.length > 0) {
+      const top = undoStack[undoStack.length - 1];
+      if (JSON.stringify(top) === JSON.stringify(this.sceneGraph.getElements())) {
+        popUndo();
+      }
+    }
   };
 
   private handleWheel = (e: WheelEvent) => {

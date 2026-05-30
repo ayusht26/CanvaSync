@@ -5,7 +5,7 @@ import { useRoomStore } from '../store/useRoomStore.js';
 import { useCanvasStore } from '../store/useCanvasStore.js';
 
 export class CanvasEngine {
-  private canvas: HTMLCanvasElement;
+  public readonly canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private camera: Camera;
   private sceneGraph: SceneGraph;

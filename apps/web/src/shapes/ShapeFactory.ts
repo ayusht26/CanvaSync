@@ -94,6 +94,12 @@ export class ShapeFactory {
           textAlign: 'left',
           textColor: base.strokeColor
         };
+      case 'image':
+        return {
+          ...base,
+          type: 'image',
+          dataUrl: (styles as any).dataUrl || '',
+        };
       default:
         throw new Error(`Unsupported shape type: ${type}`);
     }
