@@ -7,5 +7,10 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["api/**/*.ts"]
+  "include": [
+    "apps/**/*.ts",
+    "apps/**/*.tsx",
+    "packages/**/*.ts",
+    "packages/**/*.tsx"
+  ]
 }
