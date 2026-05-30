@@ -16,9 +16,12 @@ export class CanvasEventHandler {
   private camera: Camera;
   private sceneGraph: SceneGraph;
   private toolManager: ToolManager;
-  // Middle mouse pan state
   private isMiddlePanning = false;
   private middlePanLast = { x: 0, y: 0 };
+
+  // Problem 3 fix: pending cursor world position for rAF flush
+  private pendingCursorWorld: { x: number; y: number } | null = null;
+  private cursorRafId: number | null = null;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -32,7 +35,6 @@ export class CanvasEventHandler {
     this.camera = camera;
     this.sceneGraph = sceneGraph;
     this.toolManager = toolManager;
-
     this.setupListeners();
   }
 
@@ -52,6 +54,10 @@ export class CanvasEventHandler {
     this.canvas.removeEventListener('wheel', this.handleWheel);
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
+    if (this.cursorRafId !== null) {
+      cancelAnimationFrame(this.cursorRafId);
+      this.cursorRafId = null;
+    }
   }
 
   private createToolEvent(e: PointerEvent): ToolEvent {
@@ -59,7 +65,6 @@ export class CanvasEventHandler {
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
     const worldPoint = TransformUtils.screenToWorld({ x: screenX, y: screenY }, this.camera);
-
     return {
       screenX,
       screenY,
@@ -75,8 +80,25 @@ export class CanvasEventHandler {
     };
   }
 
+  // Problem 3 fix: rAF-based cursor broadcast — called once per animation frame
+  private scheduleCursorFlush(worldX: number, worldY: number) {
+    this.pendingCursorWorld = { x: worldX, y: worldY };
+    if (this.cursorRafId !== null) return; // already scheduled
+    this.cursorRafId = requestAnimationFrame(() => {
+      this.cursorRafId = null;
+      if (!this.pendingCursorWorld) return;
+      const presenceManager = useRoomStore.getState().presenceManager;
+      if (presenceManager) {
+        presenceManager.updateCursor(
+          this.pendingCursorWorld.x,
+          this.pendingCursorWorld.y
+        );
+      }
+      this.pendingCursorWorld = null;
+    });
+  }
+
   private handlePointerDown = (e: PointerEvent) => {
-    // Middle mouse button (button === 1) → start middle-pan regardless of active tool
     if (e.button === 1) {
       e.preventDefault();
       this.isMiddlePanning = true;
@@ -91,11 +113,9 @@ export class CanvasEventHandler {
   };
 
   private handlePointerMove = (e: PointerEvent) => {
-    // Update mouse position for eraser cursor overlay
     const rect = this.canvas.getBoundingClientRect();
     Renderer.mouseScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
 
-    // Middle mouse pan takes priority
     if (this.isMiddlePanning) {
       const dx = e.clientX - this.middlePanLast.x;
       const dy = e.clientY - this.middlePanLast.y;
@@ -105,23 +125,19 @@ export class CanvasEventHandler {
       this.engine.render();
       return;
     }
+
     const toolEvent = this.createToolEvent(e);
-    
-    // Broadcast cursor position for multiplayer
-    const presenceManager = useRoomStore.getState().presenceManager;
-    if (presenceManager) {
-      presenceManager.updateCursor(toolEvent.worldX, toolEvent.worldY);
-    }
+
+    // Problem 3 fix: schedule cursor broadcast via rAF (max 60fps, non-blocking)
+    this.scheduleCursorFlush(toolEvent.worldX, toolEvent.worldY);
 
     const activeTool = this.toolManager.getActiveTool();
     if (activeTool) activeTool.onPointerMove(toolEvent);
-    // Re-render so eraser cursor updates
     this.engine.render();
   };
 
   private handlePointerUp = (e: PointerEvent) => {
     this.canvas.releasePointerCapture(e.pointerId);
-    // End middle pan
     if (e.button === 1) {
       this.isMiddlePanning = false;
       return;
@@ -141,7 +157,6 @@ export class CanvasEventHandler {
       let normalizedDelta = e.deltaY;
       if (e.deltaMode === 1) normalizedDelta *= 16;
       if (e.deltaMode === 2) normalizedDelta *= 400;
-
       const zoomFactor = Math.pow(0.999, normalizedDelta);
       this.camera.zoomAt(screenX, screenY, zoomFactor);
     } else {
@@ -158,15 +173,11 @@ export class CanvasEventHandler {
 
   private handleKeyDown = (e: KeyboardEvent) => {
     const activeTool = this.toolManager.getActiveTool();
-    if (activeTool && activeTool.onKeyDown) {
-      activeTool.onKeyDown(e);
-    }
+    if (activeTool && activeTool.onKeyDown) activeTool.onKeyDown(e);
   };
 
   private handleKeyUp = (e: KeyboardEvent) => {
     const activeTool = this.toolManager.getActiveTool();
-    if (activeTool && activeTool.onKeyUp) {
-      activeTool.onKeyUp(e);
-    }
+    if (activeTool && activeTool.onKeyUp) activeTool.onKeyUp(e);
   };
 }

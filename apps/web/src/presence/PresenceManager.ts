@@ -1,9 +1,8 @@
-import * as Y from 'yjs';
 import { useRoomStore } from '../store/useRoomStore.js';
-import { CursorState, AwarenessState } from '@canvasync/shared';
+import { AwarenessState } from '@canvasync/shared';
 
 export class PresenceManager {
-  private awareness: any; // Awareness from y-websocket
+  private awareness: any;
   private roomId: string;
 
   constructor(awareness: any, roomId: string) {
@@ -18,14 +17,13 @@ export class PresenceManager {
       const collaborators = new Map<string, any>();
 
       states.forEach((state, clientID) => {
-        // We include our own local user here so it is tracked in the room store
-        // but we can distinguish it by checking if clientID === this.awareness.clientID
         if (state.user) {
           collaborators.set(clientID.toString(), {
             ...state.user,
             id: clientID.toString(),
+            // Problem 1 fix: mark own entry so CursorRenderer skips it
             isLocal: clientID === this.awareness.clientID,
-            cursor: state.cursor
+            cursor: state.cursor,
           });
         }
       });

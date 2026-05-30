@@ -1,5 +1,5 @@
 import { BaseTool, ToolEvent } from './BaseTool.js';
-import { PenShape, Point } from '@canvasync/shared';
+import { PenShape } from '@canvasync/shared';
 import { ShapeFactory } from '../shapes/ShapeFactory.js';
 
 export class PenTool extends BaseTool {
@@ -14,6 +14,10 @@ export class PenTool extends BaseTool {
       strokeStyle,
       opacity,
     }) as PenShape;
+
+    // Problem 4 fix: mark as live so SyncManager flushes it unbatched every update
+    (this.currentShape as any)._live = true;
+
     sceneGraph.add(this.currentShape);
     this.engine.render();
   }
@@ -23,35 +27,38 @@ export class PenTool extends BaseTool {
     if (!this.currentShape) return;
 
     this.currentShape.points.push({ x: worldX, y: worldY });
-    
-    // Trigger re-render by updating the shape in the scene graph
+
     sceneGraph.update(this.currentShape.id, {
       points: [...this.currentShape.points],
+      // Keep _live flag so sync manager treats this as a hot update
+      ...({ _live: true } as any),
     });
     this.engine.render();
   }
 
   onPointerUp(e: ToolEvent): void {
     if (!this.currentShape) return;
-
     const sceneGraph = e.sceneGraph;
+
     if (this.currentShape.points.length < 2) {
       sceneGraph.remove(this.currentShape.id);
     } else {
-      // Finalize - calculate actual bounding box
       const points = this.currentShape.points;
       const minX = Math.min(...points.map(p => p.x));
       const minY = Math.min(...points.map(p => p.y));
       const maxX = Math.max(...points.map(p => p.x));
       const maxY = Math.max(...points.map(p => p.y));
 
+      // Problem 4 fix: remove _live flag when stroke is complete
+      // This moves it to the stable/batched sync path
       sceneGraph.update(this.currentShape.id, {
         x: minX,
         y: minY,
         width: maxX - minX,
         height: maxY - minY,
         points: this.currentShape.points,
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        ...({ _live: false } as any),
       });
     }
 

@@ -22,6 +22,11 @@ export async function registerWebSocketServer(fastify: FastifyInstance) {
       // Handle the Yjs connection
       // @ts-ignore
       setupWSConnection(socket, req.raw, { docName: roomId, gc: true });
+      
+      // Fix for fastify-websocket stream crash:
+      // y-websocket sets binaryType to 'arraybuffer', which causes fastify-websocket's
+      // internal stream to crash when it tries to push() it. We revert it to 'nodebuffer'.
+      socket.binaryType = 'nodebuffer';
 
       const doc = docs.get(roomId);
       if (doc && !loadedRooms.has(roomId)) {

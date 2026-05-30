@@ -89,6 +89,7 @@ export const useCanvas = () => {
     const eventHandler = new CanvasEventHandler(canvas, engine, camera, sceneGraph, toolManager);
     // Register sceneGraph globally so keyboard/UI can mutate it directly
     SceneGraphService.set(sceneGraph);
+    SceneGraphService.setEngine(engine);
     sceneGraph.setShapes(useShapeStore.getState().elements);
 
     // Sync the restored camera into the Zustand store so TopBar zoom % is correct
@@ -125,6 +126,7 @@ export const useCanvas = () => {
       unsub();
       unsubScene();
       SceneGraphService.clear();
+      SceneGraphService.clearEngine();
       toolManagerRef.current = null;
       engineRef.current = null;
     };
