@@ -73,8 +73,18 @@ export const useTheme = () => {
       document.documentElement.style.setProperty('--toolbar-bg',    'rgba(255, 255, 255, 0.88)');
     }
 
-    // Update the default stroke color in the style store
-    setStrokeColor(isDark ? DARK_STROKE : LIGHT_STROKE);
+    // Update the stroke color in the style store only if it is white/black
+    // (Irrespective of whether specifically chosen or not: White -> Black on light; Black -> White on dark)
+    const currentStroke = useStyleStore.getState().strokeColor;
+    if (isDark) {
+      if (currentStroke === LIGHT_STROKE || currentStroke === '#000000') {
+        setStrokeColor(DARK_STROKE);
+      }
+    } else {
+      if (currentStroke === DARK_STROKE || currentStroke === '#ffffff') {
+        setStrokeColor(LIGHT_STROKE);
+      }
+    }
 
     // On theme *changes* (not the initial mount), swap existing shape colors
     if (!isFirstMount.current) {
@@ -82,6 +92,7 @@ export const useTheme = () => {
     }
     isFirstMount.current = false;
   }, [theme, setStrokeColor]);
+
 
   // ── Listen for class changes from AnimatedThemeToggler and sync store ────
   useEffect(() => {

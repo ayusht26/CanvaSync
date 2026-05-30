@@ -6,6 +6,7 @@ export class YjsProvider {
   public readonly doc: Y.Doc;
   public readonly provider: WebsocketProvider;
   public readonly elements: Y.Map<Shape>;
+  public readonly metadata: Y.Map<any>;
 
   constructor(roomId: string) {
     this.doc = new Y.Doc();
@@ -29,6 +30,8 @@ export class YjsProvider {
     );
 
     this.elements = this.doc.getMap<Shape>('elements');
+    this.metadata = this.doc.getMap<any>('metadata');
+
 
     this.provider.on('status', (event: any) => {
       console.log(`[YjsProvider] WebSocket status for room ${roomId}: ${event.status}`);

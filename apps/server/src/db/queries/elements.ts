@@ -29,3 +29,11 @@ export async function getElementsByRoomId(roomId: string): Promise<Shape[]> {
   `;
   return elements.map(e => e.data as Shape);
 }
+
+export async function deleteElementsByRoomId(roomId: string): Promise<void> {
+  await sql`
+    DELETE FROM elements
+    WHERE room_id = ${roomId}
+  `;
+}
+

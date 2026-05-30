@@ -1,7 +1,9 @@
 import { FastifyInstance } from 'fastify';
 import { nanoid } from 'nanoid';
-import { createRoom, getRoomById } from '../db/queries/rooms.js';
-import { getElementsByRoomId } from '../db/queries/elements.js';
+import { createRoom, getRoomById, deleteRoom } from '../db/queries/rooms.js';
+import { getElementsByRoomId, deleteElementsByRoomId } from '../db/queries/elements.js';
+// @ts-ignore
+import { docs } from 'y-websocket/bin/utils';
 
 export default async function roomRoutes(fastify: FastifyInstance) {
   fastify.post('/rooms', async (request, reply) => {
@@ -37,4 +39,25 @@ export default async function roomRoutes(fastify: FastifyInstance) {
       return reply.code(500).send({ error: 'Failed to fetch room' });
     }
   });
+
+  fastify.delete('/rooms/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      await deleteElementsByRoomId(id);
+      await deleteRoom(id);
+      
+      // Clean up in-memory Yjs doc if it exists to kick everyone out
+      const doc = docs.get(id);
+      if (doc) {
+        doc.destroy();
+        docs.delete(id);
+      }
+      
+      return reply.code(200).send({ success: true });
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({ error: 'Failed to delete room' });
+    }
+  });
 }
+

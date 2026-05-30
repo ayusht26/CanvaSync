@@ -36,7 +36,8 @@ export class PresenceManager {
     this.awareness.setLocalStateField('cursor', { x, y });
   }
 
-  public setUserInfo(name: string, color: string, userId: string) {
-    this.awareness.setLocalStateField('user', { name, color, userId });
+  public setUserInfo(name: string, color: string, userId: string, joinedAt?: number) {
+    this.awareness.setLocalStateField('user', { name, color, userId, joinedAt: joinedAt || Date.now() });
   }
+
 }

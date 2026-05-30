@@ -4,12 +4,27 @@ import { useCanvasStore } from '../../store/useCanvasStore';
 import { Copy, Check, Users, Link2, Share2, ChevronDown, ChevronUp, Crown } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { SceneGraphService } from '../../canvas/SceneGraphService.js';
+import { useNavigate } from 'react-router-dom';
+import { openDB } from 'idb';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../../components/ui/alert-dialog.js';
+
 export const RoomPanel: React.FC = () => {
-  const { roomId, ownerId, collaborators } = useRoomStore();
+  const { roomId, ownerId, collaborators, localUserId, provider } = useRoomStore();
   const { updateCamera } = useCanvasStore();
   const [copied, setCopied] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
+  const [showEndDialog, setShowEndDialog] = useState(false);
+  const navigate = useNavigate();
 
   if (!roomId) return null;
 
@@ -32,6 +47,48 @@ export const RoomPanel: React.FC = () => {
     // Problem 5 fix: use CanvasEngine.animateCamera() — proper rAF loop
     // with ease-out-expo, syncs camera class AND Zustand store every frame
     engine.animateCamera(user.cursor.x, user.cursor.y, 900);
+  };
+
+  const handleEndSessionKeepCanvas = async () => {
+    setShowEndDialog(false);
+    
+    // Copy the multiplayer board shapes to local IndexedDB before redirect
+    try {
+      const shapes = SceneGraphService.get()?.getElements() || [];
+      const db = await openDB('canvasync-db', 1);
+      await db.put('local-canvas', shapes, 'shapes');
+      console.log('[RoomPanel] Successfully cloned multiplayer elements to local IndexedDB.');
+    } catch (err) {
+      console.error('[RoomPanel] Failed to save board locally:', err);
+    }
+
+    if (provider) {
+      provider.metadata.set('sessionEnded', { ended: true });
+    }
+
+    // Call DELETE to clean up the room backend immediately
+    if (roomId) {
+      const baseUrl = (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:3001';
+      fetch(`${baseUrl}/rooms/${roomId}`, { method: 'DELETE' }).catch(console.error);
+    }
+
+    navigate('/');
+  };
+
+  const handleEndSessionNewCanvas = () => {
+    setShowEndDialog(false);
+
+    if (provider) {
+      provider.metadata.set('sessionEnded', { ended: true });
+    }
+
+    // Call DELETE to clean up the room backend immediately
+    if (roomId) {
+      const baseUrl = (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:3001';
+      fetch(`${baseUrl}/rooms/${roomId}`, { method: 'DELETE' }).catch(console.error);
+    }
+
+    navigate('/');
   };
 
   return (
@@ -174,11 +231,65 @@ export const RoomPanel: React.FC = () => {
                     </motion.div>
                   )}
                 </AnimatePresence>
+
+                {/* Owner End Room Session Button */}
+                {localUserId === ownerId && (
+                  <div className="mt-4 pt-3.5 border-t" style={{ borderColor: 'var(--border)' }}>
+                    <button
+                      onClick={() => setShowEndDialog(true)}
+                      className="w-full py-2 px-3 rounded-xl text-xs font-semibold text-white transition-all active:scale-[0.98] flex items-center justify-center gap-1.5"
+                      style={{
+                        background: 'rgba(239, 68, 68, 0.9)',
+                        boxShadow: '0 4px 12px rgba(239, 68, 68, 0.25)',
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = 'rgb(220, 38, 38)'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.9)'}
+                    >
+                      End Room Session
+                    </button>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
         </AnimatePresence>
       </motion.div>
+
+      {/* END SESSION CONFIRMATION ALERT DIALOG */}
+      <AlertDialog open={showEndDialog} onOpenChange={setShowEndDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>End Room Session?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will end the multiplayer session and disconnect all participants. Choose how you would like to continue:
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex flex-col sm:flex-row gap-2 sm:gap-0 justify-between items-center w-full">
+            <AlertDialogCancel onClick={() => setShowEndDialog(false)} className="w-full sm:w-auto">
+              Cancel
+            </AlertDialogCancel>
+            
+            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto shrink-0">
+              <button
+                onClick={handleEndSessionNewCanvas}
+                className="alert-dialog-btn alert-dialog-btn-cancel sm:ml-2 w-full sm:w-auto py-2 px-3.5 rounded-lg text-xs font-semibold hover:bg-[var(--bg-elevated)] transition-colors"
+                style={{ border: '1px solid var(--border)', color: 'var(--text-primary)', background: 'transparent' }}
+              >
+                Discard & Exit
+              </button>
+              
+              <button
+                onClick={handleEndSessionKeepCanvas}
+                className="alert-dialog-btn alert-dialog-btn-action w-full sm:w-auto py-2 px-3.5 rounded-lg text-xs font-semibold text-white transition-colors"
+                style={{ background: 'var(--accent)' }}
+              >
+                Keep Board (Use Locally)
+              </button>
+            </div>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
+

@@ -11,6 +11,7 @@ interface RoomState {
   presentationMode: boolean;
   localUser: { name: string; color: string } | null;
   presenceManager: PresenceManager | null;
+  provider: any | null;
   
   setRoomId: (id: string | null) => void;
   setRoomDetails: (name: string | null, ownerId: string | null) => void;
@@ -20,6 +21,7 @@ interface RoomState {
   setPresentationMode: (mode: boolean) => void;
   setLocalUser: (user: { name: string; color: string } | null) => void;
   setPresenceManager: (manager: PresenceManager | null) => void;
+  setProvider: (provider: any | null) => void;
 }
 
 const getOrCreateUserId = () => {
@@ -40,6 +42,7 @@ export const useRoomStore = create<RoomState>((set) => ({
   presentationMode: false,
   localUser: null,
   presenceManager: null,
+  provider: null,
 
   setRoomId: (roomId) => set({ roomId }),
   setRoomDetails: (roomName, ownerId) => set({ roomName, ownerId }),
@@ -65,5 +68,6 @@ export const useRoomStore = create<RoomState>((set) => ({
   setLocalUser: (localUser) => set({ localUser }),
   
   setPresenceManager: (presenceManager) => set({ presenceManager }),
+  setProvider: (provider) => set({ provider }),
 }));
 

@@ -22,3 +22,12 @@ export async function getRoomById(id: string): Promise<Room | null> {
   `;
   return room || null;
 }
+
+export async function deleteRoom(id: string): Promise<boolean> {
+  const result = await sql`
+    DELETE FROM rooms
+    WHERE id = ${id}
+  `;
+  return result.count > 0;
+}
+
