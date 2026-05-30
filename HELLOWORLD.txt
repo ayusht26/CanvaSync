@@ -2,29 +2,29 @@
 CANVASYNC DEPLOYMENT ENVIRONMENT VARIABLES
 =========================================
 
-1. RAILWAY ENVIRONMENT VARIABLES
+1. RENDER ENVIRONMENT VARIABLES (Backend)
 -----------------------------------------
-Go to your Railway Project -> CanvaSync Server -> Variables tab.
-Copy-paste these exact values:
+Go to your Render Dashboard -> canvasync-server -> Environment.
+Ensure these exact values are set:
 
-PORT=3001
-NODE_ENV=production
 CORS_ORIGIN=https://canvasync-sage.vercel.app
 DATABASE_URL=postgresql://postgres.svekdifyeymcedqxpgxa:ONYLVQi8Ddw2EkG4@aws-1-ap-south-1.pooler.supabase.com:6543/postgres
+NODE_ENV=production
+PORT=10000
 
 
-2. VERCEL ENVIRONMENT VARIABLES
+2. VERCEL ENVIRONMENT VARIABLES (Frontend)
 -----------------------------------------
-Go to Vercel -> canvasync-sage -> Settings -> Environment Variables.
-Copy-paste these exact values (make sure they are added under "Production"):
+Go to your Vercel Project -> Settings -> Environment Variables.
 
-SUPABASE_DATABASE_URL=postgresql://postgres.svekdifyeymcedqxpgxa:ONYLVQi8Ddw2EkG4@aws-1-ap-south-1.pooler.supabase.com:6543/postgres
-VITE_APP_NAME=CanvaSync
-VITE_API_URL=
-VITE_WS_URL=wss://canvasyncserver-production.up.railway.app
+Copy-paste these exact values:
 
-*Note for VITE_WS_URL:
-This is your actual deployed Railway URL. It is set up with wss:// for secure WebSockets.
+VITE_SUPABASE_URL=https://svekdifyeymcedqxpgxa.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN2ZWtkaWZ5ZXltY2VkcXhwZ3hhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5NjUxODEsImV4cCI6MjA5NTU0MTE4MX0.DpXEoNHcU725ik90-NgmdrNSDINhDi4R0S0gmAF90q8
+
+Since you deployed the backend to Render, point Vercel directly to your Render server:
+VITE_API_URL=https://canvasync-server.onrender.com
+VITE_WEBSOCKET_URL=wss://canvasync-server.onrender.com
 
 
 3. COMMANDS TO DEPLOY

@@ -2,23 +2,14 @@ import { Shape } from '@canvasync/shared';
 import { useRoomStore } from '../store/useRoomStore.js';
 
 export class RoomManager {
-  // In production (Vercel), API calls go to /api/* (serverless functions).
-  // In local dev, they go to the Fastify server on VITE_API_URL.
+  // In production, API calls go to the Railway Fastify server (VITE_API_URL).
+  // In local dev, they go to the local Fastify server on port 3001.
   private static get BASE_URL(): string {
-    const viteUrl = import.meta.env.VITE_API_URL as string | undefined;
-    // If running on Vercel (or any non-localhost origin), use relative /api path
-    if (!viteUrl || viteUrl.includes('localhost')) {
-      // Check if we're in production by looking at the hostname
-      if (typeof window !== 'undefined' && !window.location.hostname.includes('localhost')) {
-        return ''; // relative URL → /api/rooms will resolve correctly
-      }
-    }
-    return viteUrl || 'http://localhost:3001';
+    return (import.meta.env.VITE_API_URL as string | undefined) || 'http://localhost:3001';
   }
 
   static async createRoom(name?: string, _initialElements?: Shape[]): Promise<string> {
-    const baseUrl = RoomManager.BASE_URL;
-    const url = baseUrl ? `${baseUrl}/rooms` : '/api/rooms';
+    const url = `${RoomManager.BASE_URL}/rooms`;
 
     const response = await fetch(url, {
       method: 'POST',
@@ -40,8 +31,7 @@ export class RoomManager {
   }
 
   static async getRoom(id: string) {
-    const baseUrl = RoomManager.BASE_URL;
-    const url = baseUrl ? `${baseUrl}/rooms/${id}` : `/api/rooms/${id}`;
+    const url = `${RoomManager.BASE_URL}/rooms/${id}`;
     const response = await fetch(url);
     if (!response.ok) return null;
     return response.json();
