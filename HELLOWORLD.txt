@@ -1,0 +1,36 @@
+=========================================
+CANVASYNC DEPLOYMENT ENVIRONMENT VARIABLES
+=========================================
+
+1. RAILWAY ENVIRONMENT VARIABLES
+-----------------------------------------
+Go to your Railway Project -> CanvaSync Server -> Variables tab.
+Copy-paste these exact values:
+
+PORT=3001
+NODE_ENV=production
+CORS_ORIGIN=https://canvasync-sage.vercel.app
+DATABASE_URL=postgresql://postgres.svekdifyeymcedqxpgxa:ONYLVQi8Ddw2EkG4@aws-1-ap-south-1.pooler.supabase.com:6543/postgres
+
+
+2. VERCEL ENVIRONMENT VARIABLES
+-----------------------------------------
+Go to Vercel -> canvasync-sage -> Settings -> Environment Variables.
+Copy-paste these exact values (make sure they are added under "Production"):
+
+SUPABASE_DATABASE_URL=postgresql://postgres.svekdifyeymcedqxpgxa:ONYLVQi8Ddw2EkG4@aws-1-ap-south-1.pooler.supabase.com:6543/postgres
+VITE_APP_NAME=CanvaSync
+VITE_API_URL=
+VITE_WS_URL=wss://canvasyncserver-production.up.railway.app
+
+*Note for VITE_WS_URL:
+This is your actual deployed Railway URL. It is set up with wss:// for secure WebSockets.
+
+
+3. COMMANDS TO DEPLOY
+-----------------------------------------
+Run these three commands in your terminal to push everything and deploy to Vercel:
+
+git add -A
+git commit -m "fix: deploy canvasync with supabase integration"
+git push
