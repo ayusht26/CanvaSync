@@ -1,6 +1,7 @@
 import { Camera } from '../canvas/Camera.js';
 import { BoundingBox, Shape } from '@canvasync/shared';
 import { getArrowMidPoint } from '../canvas/ArrowConnections.js';
+import { TextRenderer } from './shapes/TextRenderer.js';
 
 export class SelectionRenderer {
   static draw(
@@ -37,11 +38,17 @@ export class SelectionRenderer {
     // Calculate common bounding box
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     selectedElements.forEach(el => {
+      const isText = el.type === 'text';
+      const textMeasured = isText ? TextRenderer.measure(el as any) : null;
+      const w = textMeasured ? textMeasured.width : (el.width || 0);
+      const h = textMeasured ? textMeasured.height : (el.height || 0);
+
       minX = Math.min(minX, el.x);
       minY = Math.min(minY, el.y);
-      maxX = Math.max(maxX, el.x + (el.width || 0));
-      maxY = Math.max(maxY, el.y + (el.height || 0));
+      maxX = Math.max(maxX, el.x + w);
+      maxY = Math.max(maxY, el.y + h);
     });
+
 
     const padding = 4 / camera.zoom;
     const boxX = minX - padding;
@@ -106,8 +113,13 @@ export class SelectionRenderer {
     const isSingleRotatable = selectedIds.size === 1 && singleShape.type !== 'pen' && singleShape.type !== 'line' && singleShape.type !== 'arrow';
 
     if (isSingleRotatable && singleShape.rotation) {
-      const cx = singleShape.x + singleShape.width / 2;
-      const cy = singleShape.y + singleShape.height / 2;
+      const isText = singleShape.type === 'text';
+      const textMeasured = isText ? TextRenderer.measure(singleShape as any) : null;
+      const w = textMeasured ? textMeasured.width : (singleShape.width || 0);
+      const h = textMeasured ? textMeasured.height : (singleShape.height || 0);
+
+      const cx = singleShape.x + w / 2;
+      const cy = singleShape.y + h / 2;
       ctx.translate(cx, cy);
       ctx.rotate(singleShape.rotation);
       ctx.translate(-cx, -cy);

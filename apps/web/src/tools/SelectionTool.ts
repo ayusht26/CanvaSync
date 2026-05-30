@@ -1,6 +1,7 @@
 import { BaseTool, ToolEvent } from './BaseTool.js';
 import { ToolName, Shape } from '@canvasync/shared';
 import { HitDetection } from '../canvas/HitDetection.js';
+import { TextRenderer } from '../renderer/shapes/TextRenderer.js';
 
 import { findHoveredShape, getNearestAnchorOnShape, getShapeConnectionPoint, resolveArrowEndpoints, getArrowMidPoint } from '../canvas/ArrowConnections.js';
 import { ArrowHoverOverlay } from '../renderer/ArrowHoverOverlay.js';
@@ -155,7 +156,7 @@ export class SelectionTool extends BaseTool {
       selectionStore.getState().setSelectedIds(newSelected);
       this.engine.render();
     } else if (this.mode === 'resizing' && this.activeHandle) {
-      this.handleResize(worldX, worldY, sceneGraph, selectionStore.getState().selectedIds);
+      this.handleResize(worldX, worldY, sceneGraph, selectionStore.getState().selectedIds, e.shiftKey);
       this.engine.render();
     } else if (this.mode === 'rotating') {
       this.handleRotate(worldX, worldY, sceneGraph, selectionStore.getState().selectedIds);
@@ -281,10 +282,15 @@ export class SelectionTool extends BaseTool {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     sceneGraph.getElements().forEach((s: Shape) => {
       if (!selectedIds.has(s.id)) return;
+      const isText = s.type === 'text';
+      const textMeasured = isText ? TextRenderer.measure(s as any) : null;
+      const w = textMeasured ? textMeasured.width : (s.width || 0);
+      const h = textMeasured ? textMeasured.height : (s.height || 0);
+
       minX = Math.min(minX, s.x);
       minY = Math.min(minY, s.y);
-      maxX = Math.max(maxX, s.x + (s.width || 0));
-      maxY = Math.max(maxY, s.y + (s.height || 0));
+      maxX = Math.max(maxX, s.x + w);
+      maxY = Math.max(maxY, s.y + h);
     });
     if (!isFinite(minX)) return { x: 0, y: 0, w: 0, h: 0 };
     return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
@@ -327,8 +333,13 @@ export class SelectionTool extends BaseTool {
     let testY = worldY;
 
     if (isSingleRotatable && singleShape.rotation) {
-      const cx = singleShape.x + singleShape.width / 2;
-      const cy = singleShape.y + singleShape.height / 2;
+      const isText = singleShape.type === 'text';
+      const textMeasured = isText ? TextRenderer.measure(singleShape as any) : null;
+      const w = textMeasured ? textMeasured.width : (singleShape.width || 0);
+      const h = textMeasured ? textMeasured.height : (singleShape.height || 0);
+
+      const cx = singleShape.x + w / 2;
+      const cy = singleShape.y + h / 2;
       const cos = Math.cos(-singleShape.rotation);
       const sin = Math.sin(-singleShape.rotation);
       const dx = worldX - cx;
@@ -358,7 +369,7 @@ export class SelectionTool extends BaseTool {
     return null;
   }
 
-  private handleResize(worldX: number, worldY: number, sceneGraph: any, selectedIds: Set<string>) {
+  private handleResize(worldX: number, worldY: number, sceneGraph: any, selectedIds: Set<string>, shiftKey: boolean) {
     if (!this.activeHandle) return;
     const { type, originX, originY } = this.activeHandle;
 
@@ -399,6 +410,42 @@ export class SelectionTool extends BaseTool {
     // Prevent negative dimensions
     if (newW < 5) newW = 5;
     if (newH < 5) newH = 5;
+
+    // Aspect ratio lock (Shift-resize)
+    if (shiftKey && this.initialBBox.w > 0 && this.initialBBox.h > 0) {
+      const initialRatio = this.initialBBox.w / this.initialBBox.h;
+      if (type === 'ml' || type === 'mr') {
+        newH = newW / initialRatio;
+      } else if (type === 'tc' || type === 'bc') {
+        newW = newH * initialRatio;
+      } else {
+        const currentRatio = newW / newH;
+        if (currentRatio > initialRatio) {
+          newH = newW / initialRatio;
+        } else {
+          newW = newH * initialRatio;
+        }
+      }
+
+      // Re-align position to keep anchor stationary or centered
+      if (type === 'tl' || type === 'ml' || type === 'bl') {
+        newX = originX! - newW;
+      } else if (type === 'tr' || type === 'mr' || type === 'br') {
+        newX = originX!;
+      }
+
+      if (type === 'tl' || type === 'tc' || type === 'tr') {
+        newY = originY! - newH;
+      } else if (type === 'bl' || type === 'bc' || type === 'br') {
+        newY = originY!;
+      }
+
+      if (type === 'ml' || type === 'mr') {
+        newY = originY! - newH / 2;
+      } else if (type === 'tc' || type === 'bc') {
+        newX = originX! - newW / 2;
+      }
+    }
 
     if (isSingleRotatable && singleShape.rotation) {
       const cxLocal = newX + newW / 2;

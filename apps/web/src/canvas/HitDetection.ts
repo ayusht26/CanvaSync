@@ -1,10 +1,17 @@
 import { Shape, Point, BoundingBox } from '@canvasync/shared';
+import { TextRenderer } from '../renderer/shapes/TextRenderer.js';
 
 export class HitDetection {
   static isPointInShape(point: Point, shape: Shape): boolean {
     // 1. Rotate the point back by the negative of shape's rotation around shape's center
-    const centerX = shape.x + shape.width / 2;
-    const centerY = shape.y + shape.height / 2;
+    // If shape is a text shape, measure its bounds dynamically first
+    const isText = shape.type === 'text';
+    const textMeasured = isText ? TextRenderer.measure(shape as any) : null;
+    const shapeW = textMeasured ? textMeasured.width : (shape.width || 0);
+    const shapeH = textMeasured ? textMeasured.height : (shape.height || 0);
+
+    const centerX = shape.x + shapeW / 2;
+    const centerY = shape.y + shapeH / 2;
     
     const rotatedPoint = this.rotatePoint(point, { x: centerX, y: centerY }, -shape.rotation);
 
@@ -18,9 +25,9 @@ export class HitDetection {
       case 'image':
         return (
           rotatedPoint.x >= shape.x &&
-          rotatedPoint.x <= shape.x + shape.width &&
+          rotatedPoint.x <= shape.x + shapeW &&
           rotatedPoint.y >= shape.y &&
-          rotatedPoint.y <= shape.y + shape.height
+          rotatedPoint.y <= shape.y + shapeH
         );
       case 'pen': {
         if (shape.width < 1 && shape.height < 1) return false;
@@ -42,12 +49,16 @@ export class HitDetection {
 
   static isRectInShape(rect: BoundingBox, shape: Shape): boolean {
     // Simplified AABB intersection for now
-    // In a real app, we'd do SAT (Separating Axis Theorem) for rotated shapes
+    const isText = shape.type === 'text';
+    const textMeasured = isText ? TextRenderer.measure(shape as any) : null;
+    const shapeW = textMeasured ? textMeasured.width : (shape.width || 0);
+    const shapeH = textMeasured ? textMeasured.height : (shape.height || 0);
+
     const shapeBounds = {
       left: shape.x,
-      right: shape.x + shape.width,
+      right: shape.x + shapeW,
       top: shape.y,
-      bottom: shape.y + shape.height
+      bottom: shape.y + shapeH
     };
 
     const rectBounds = {
@@ -56,6 +67,7 @@ export class HitDetection {
       top: rect.y,
       bottom: rect.y + rect.height
     };
+
 
     return !(
       rectBounds.left > shapeBounds.right ||

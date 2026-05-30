@@ -19,8 +19,13 @@ export class ShapeRenderer {
     ctx.globalAlpha = shape.opacity ?? 1;
 
     if (shape.type !== 'pen' && shape.type !== 'line' && shape.type !== 'arrow') {
-      const cx = shape.x + shape.width / 2;
-      const cy = shape.y + shape.height / 2;
+      const isText = shape.type === 'text';
+      const textMeasured = isText ? TextRenderer.measure(shape as any) : null;
+      const w = textMeasured ? textMeasured.width : (shape.width || 0);
+      const h = textMeasured ? textMeasured.height : (shape.height || 0);
+
+      const cx = shape.x + w / 2;
+      const cy = shape.y + h / 2;
       ctx.translate(cx, cy);
       ctx.rotate(shape.rotation ?? 0);
       ctx.translate(-cx, -cy);
