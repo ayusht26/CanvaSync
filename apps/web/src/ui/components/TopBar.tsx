@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  Share2, ChevronDown, Plus, Minus,
+  Share2, ChevronDown, Plus, Minus, Copy, Check,
   MousePointer2, Hand, Pencil, Square, Circle,
   Minus as MinusIcon, ArrowRight, Type, Eraser, Triangle, Diamond,
   Trash2
@@ -58,9 +58,22 @@ export const TopBar: React.FC<TopBarProps> = ({ onShareClick, canvasName = 'Unti
   const { roomId, collaborators } = useRoomStore();
   const [isEditingName, setIsEditingName] = useState(false);
   const [localName, setLocalName] = useState(canvasName);
+  const [linkCopied, setLinkCopied] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setLocalName(canvasName); }, [canvasName]);
+
+  const handleShareOrCopy = () => {
+    if (roomId) {
+      // In a room: copy the share link
+      const shareUrl = `${window.location.origin}/room/${roomId}`;
+      navigator.clipboard.writeText(shareUrl);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2500);
+    } else {
+      onShareClick?.();
+    }
+  };
 
   const handleNameSubmit = () => {
     setIsEditingName(false);
@@ -231,16 +244,25 @@ export const TopBar: React.FC<TopBarProps> = ({ onShareClick, canvasName = 'Unti
       {/* COLLABORATORS */}
       {collaborators.size > 0 && (
         <div className="flex -space-x-1.5 flex-shrink-0">
-          {Array.from(collaborators.values()).slice(0, 4).map((col: any, i) => (
+          {Array.from(collaborators.values()).slice(0, 5).map((col: any, i) => (
             <div
-              key={i}
-              title={col.user?.name || 'Anonymous'}
+              key={col.id || i}
+              title={col.name || 'Anonymous'}
               className="w-6 h-6 rounded-full border-2 flex items-center justify-center text-[9px] font-bold text-white uppercase"
-              style={{ backgroundColor: col.user?.color || '#888', borderColor: 'var(--bg-surface)' }}
+              style={{ backgroundColor: col.color || '#888', borderColor: 'var(--bg-surface)' }}
             >
-              {(col.user?.name || 'A').charAt(0)}
+              {(col.name || 'A').charAt(0)}
             </div>
           ))}
+          {collaborators.size > 5 && (
+            <div
+              className="w-6 h-6 rounded-full border-2 flex items-center justify-center text-[9px] font-bold text-white"
+              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--bg-surface)', color: 'var(--text-secondary)' }}
+              title={`${collaborators.size - 5} more`}
+            >
+              +{collaborators.size - 5}
+            </div>
+          )}
         </div>
       )}
 
@@ -285,19 +307,20 @@ export const TopBar: React.FC<TopBarProps> = ({ onShareClick, canvasName = 'Unti
         style={{ color: 'var(--text-secondary)' } as any}
       />
 
-      {/* SHARE */}
+      {/* SHARE / COPY LINK */}
       <button
-        onClick={onShareClick}
+        onClick={handleShareOrCopy}
         className="flex items-center gap-1.5 text-xs font-semibold text-white px-3 py-1.5 rounded-lg transition-all active:scale-95"
         style={{
-          background: 'var(--accent)',
+          background: linkCopied ? 'var(--accent-hover)' : 'var(--accent)',
           boxShadow: '0 2px 8px var(--accent-glow)',
         }}
         onMouseEnter={e => (e.currentTarget.style.background = 'var(--accent-hover)')}
-        onMouseLeave={e => (e.currentTarget.style.background = 'var(--accent)')}
+        onMouseLeave={e => (e.currentTarget.style.background = linkCopied ? 'var(--accent-hover)' : 'var(--accent)')}
+        title={roomId ? 'Copy share link' : 'Share & create room'}
       >
-        <Share2 size={13} />
-        <span className="hidden sm:inline">Share</span>
+        {linkCopied ? <Check size={13} /> : roomId ? <Copy size={13} /> : <Share2 size={13} />}
+        <span className="hidden sm:inline">{linkCopied ? 'Copied!' : roomId ? 'Copy Link' : 'Share'}</span>
       </button>
     </div>
   );

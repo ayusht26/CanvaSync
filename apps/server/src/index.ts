@@ -13,9 +13,22 @@ const fastify = Fastify({
 });
 
 // Register plugins
+const allowedOrigins = (process.env.CORS_ORIGIN || '*').split(',').map(o => o.trim());
+
 await fastify.register(cors, {
-  origin: process.env.CORS_ORIGIN || '*'
+  origin: (origin, callback) => {
+    // Allow requests with no origin (server-to-server, curl, etc.)
+    if (!origin) return callback(null, true);
+    // Allow all origins listed in CORS_ORIGIN env (comma-separated)
+    if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`Origin ${origin} not allowed by CORS`), false);
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 });
+
 
 await fastify.register(rateLimit, {
   max: 100,

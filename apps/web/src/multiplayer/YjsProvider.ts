@@ -9,26 +9,37 @@ export class YjsProvider {
 
   constructor(roomId: string) {
     this.doc = new Y.Doc();
-    
-    // In Vite, we use import.meta.env for environment variables
+
+    // Resolve the WebSocket server URL:
+    // - In production: use VITE_WS_URL env var (set to your Railway server)
+    // - In local dev: use ws://localhost:3001
     const wsUrl = (import.meta.env.VITE_WS_URL as string) || 'ws://localhost:3001';
-    
-    // The WebsocketProvider expects the server URL, the room name, and the Y.Doc
-    // We append /room to the URL so it matches our Fastify route: /room/:roomId
+
+    // The WebsocketProvider connects to wsUrl/room/roomId
+    // Our Fastify route is: GET /room/:roomId (websocket: true)
     this.provider = new WebsocketProvider(
       `${wsUrl}/room`,
       roomId,
-      this.doc
+      this.doc,
+      {
+        // Reconnect automatically on disconnect
+        connect: true,
+        resyncInterval: -1,
+      }
     );
 
     this.elements = this.doc.getMap<Shape>('elements');
 
     this.provider.on('status', (event: any) => {
-      console.log(`WebSocket status for room ${roomId}: ${event.status}`);
+      console.log(`[YjsProvider] WebSocket status for room ${roomId}: ${event.status}`);
     });
 
     this.provider.on('sync', (isSynced: boolean) => {
-      console.log(`Yjs synced for room ${roomId}: ${isSynced}`);
+      console.log(`[YjsProvider] Synced for room ${roomId}: ${isSynced}`);
+    });
+
+    this.provider.on('connection-error', (err: any) => {
+      console.error(`[YjsProvider] Connection error for room ${roomId}:`, err);
     });
   }
 

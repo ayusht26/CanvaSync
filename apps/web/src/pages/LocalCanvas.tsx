@@ -38,13 +38,10 @@ const LocalCanvas: React.FC = () => {
 
 
   const handleCreateRoom = async ({ name, includeElements }: { name?: string; includeElements: boolean }) => {
-    try {
-      const roomId = await RoomManager.createRoom(name || canvasName, includeElements ? elements : []);
-      setShowShare(false);
-      RoomManager.navigateToRoom(roomId, navigate);
-    } catch (err) {
-      console.error('Failed to create room:', err);
-    }
+    // Throws on error — the CreateRoomModal catches it and displays an error message
+    const roomId = await RoomManager.createRoom(name || canvasName, includeElements ? elements : []);
+    setShowShare(false);
+    RoomManager.navigateToRoom(roomId, navigate);
   };
 
   return (
