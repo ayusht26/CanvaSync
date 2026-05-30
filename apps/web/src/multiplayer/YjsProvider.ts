@@ -12,9 +12,24 @@ export class YjsProvider {
     this.doc = new Y.Doc();
 
     // Resolve the WebSocket server URL:
-    // - In production: use VITE_WS_URL env var (set to your Railway server)
-    // - In local dev: use ws://localhost:3001
-    const wsUrl = (import.meta.env.VITE_WS_URL as string) || 'ws://localhost:3001';
+    // - Try VITE_WS_URL first.
+    // - Try VITE_WEBSOCKET_URL second (configured in Vercel settings).
+    // - Try converting VITE_API_URL (http/https -> ws/wss).
+    // - Fall back to 'ws://localhost:3001' as a last resort.
+    let wsUrl = (import.meta.env.VITE_WS_URL as string) || (import.meta.env.VITE_WEBSOCKET_URL as string);
+    if (!wsUrl) {
+      const apiUrl = import.meta.env.VITE_API_URL as string | undefined;
+      if (apiUrl) {
+        wsUrl = apiUrl.replace(/^http/, 'ws');
+      } else {
+        wsUrl = 'ws://localhost:3001';
+      }
+    }
+
+    // Strip trailing slash if present to avoid duplicate slashes in the path
+    if (wsUrl.endsWith('/')) {
+      wsUrl = wsUrl.slice(0, -1);
+    }
 
     // The WebsocketProvider connects to wsUrl/room/roomId
     // Our Fastify route is: GET /room/:roomId (websocket: true)
