@@ -9,11 +9,11 @@ import { useHistoryStore } from '../../store/useHistoryStore.js';
 import { ColorPicker } from '../../components/ui/color-picker.js';
 import { Slider } from '../../components/ui/slider.js';
 import {
-  ArrowUpToLine, ArrowDownToLine, ArrowUp, ArrowDown, Trash2, AlignLeft, AlignCenter, AlignRight
+  ArrowUpToLine, ArrowDownToLine, ArrowUp, ArrowDown, Trash2, AlignLeft, AlignCenter, AlignRight, Blend
 } from 'lucide-react';
 
 const STROKE_COLORS = [
-  '#fafafa', '#09090b', '#ef4444', '#f97316', '#eab308',
+  'blend', '#09090b', '#ef4444', '#f97316', '#eab308',
   '#22c55e', '#06b6d4', '#6366f1', '#a855f7', '#ec4899',
 ];
 
@@ -82,7 +82,13 @@ export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
   const elements = useShapeStore(state => state.elements);
   const { activeTool } = useCanvasStore();
 
-  const [fontFamily, setFontFamilyState] = useState('Inter');
+  const [fontFamily, setFontFamilyState] = useState(() => {
+    const defaultFont = 'Playwrite GB J';
+    if (typeof window !== 'undefined' && !(window as any).__textFontFamily) {
+      (window as any).__textFontFamily = defaultFont;
+    }
+    return defaultFont;
+  });
   const [fontSize, setFontSizeState] = useState(20);
   const [textAlign, setTextAlignState] = useState<'left'|'center'|'right'>('left');
 
@@ -208,13 +214,18 @@ export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
   const ColorSwatch = ({ color, selected, onClick }: { color: string; selected: boolean; onClick: () => void }) => (
     <button
       onClick={onClick}
-      className="w-7 h-7 rounded-lg transition-all duration-100 active:scale-90 relative"
+      className="w-7 h-7 rounded-lg transition-all duration-100 active:scale-90 relative flex items-center justify-center"
       style={{
-        background: color === 'transparent' ? undefined : color,
+        background: color === 'transparent'
+          ? undefined
+          : color === 'blend'
+            ? 'var(--bg-elevated)'
+            : color,
         border: selected ? '2px solid var(--text-primary)' : '1.5px solid var(--border)',
         transform: selected ? 'scale(1.12)' : undefined,
         boxShadow: selected ? '0 0 0 2px var(--bg-surface)' : undefined,
       }}
+      title={color === 'blend' ? 'Adaptive Blend Ink' : undefined}
     >
       {color === 'transparent' && (
         <div className="absolute inset-0 rounded-lg overflow-hidden">
@@ -225,6 +236,9 @@ export const StylePanel: React.FC<StylePanelProps> = ({ sceneGraph }) => {
             <div className="w-[70%] h-px rotate-45" style={{ background: '#ef4444' }} />
           </div>
         </div>
+      )}
+      {color === 'blend' && (
+        <Blend size={14} className="text-[var(--text-primary)]" />
       )}
     </button>
   );

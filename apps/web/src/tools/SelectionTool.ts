@@ -287,10 +287,15 @@ export class SelectionTool extends BaseTool {
       const w = textMeasured ? textMeasured.width : (s.width || 0);
       const h = textMeasured ? textMeasured.height : (s.height || 0);
 
+      let shapeY = s.y;
+      if (isText) {
+        shapeY += (s.fontSize || 20) * 0.15;
+      }
+
       minX = Math.min(minX, s.x);
-      minY = Math.min(minY, s.y);
+      minY = Math.min(minY, shapeY);
       maxX = Math.max(maxX, s.x + w);
-      maxY = Math.max(maxY, s.y + h);
+      maxY = Math.max(maxY, shapeY + h);
     });
     if (!isFinite(minX)) return { x: 0, y: 0, w: 0, h: 0 };
     return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
@@ -338,8 +343,13 @@ export class SelectionTool extends BaseTool {
       const w = textMeasured ? textMeasured.width : (singleShape.width || 0);
       const h = textMeasured ? textMeasured.height : (singleShape.height || 0);
 
+      let shapeY = singleShape.y;
+      if (isText) {
+        shapeY += (singleShape.fontSize || 20) * 0.15;
+      }
+
       const cx = singleShape.x + w / 2;
-      const cy = singleShape.y + h / 2;
+      const cy = shapeY + h / 2;
       const cos = Math.cos(-singleShape.rotation);
       const sin = Math.sin(-singleShape.rotation);
       const dx = worldX - cx;

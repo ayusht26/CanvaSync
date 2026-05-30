@@ -296,20 +296,5 @@ canvasync/
 
 ## License
 
-MIT — free to use, fork, and build on.
-
----
-
-<div align="center">
-
-<br />
-
-Built by **Ayush Tiwari**
-
-<br />
-
-[![→ Open CanvaSync](https://img.shields.io/badge/%E2%86%92%20%20canvasync--sage.vercel.app-6366f1?style=for-the-badge)](https://canvasync-sage.vercel.app/)
-
-<br /><br />
-
-</div>
+MIT
+A modern collaborative whiteboard platform

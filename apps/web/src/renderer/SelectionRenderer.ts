@@ -43,11 +43,17 @@ export class SelectionRenderer {
       const w = textMeasured ? textMeasured.width : (el.width || 0);
       const h = textMeasured ? textMeasured.height : (el.height || 0);
 
+      let shapeY = el.y;
+      if (isText) {
+        shapeY += (el.fontSize || 20) * 0.15;
+      }
+
       minX = Math.min(minX, el.x);
-      minY = Math.min(minY, el.y);
+      minY = Math.min(minY, shapeY);
       maxX = Math.max(maxX, el.x + w);
-      maxY = Math.max(maxY, el.y + h);
+      maxY = Math.max(maxY, shapeY + h);
     });
+
 
 
     const padding = 4 / camera.zoom;
@@ -118,8 +124,13 @@ export class SelectionRenderer {
       const w = textMeasured ? textMeasured.width : (singleShape.width || 0);
       const h = textMeasured ? textMeasured.height : (singleShape.height || 0);
 
+      let shapeY = singleShape.y;
+      if (isText) {
+        shapeY += (singleShape.fontSize || 20) * 0.15;
+      }
+
       const cx = singleShape.x + w / 2;
-      const cy = singleShape.y + h / 2;
+      const cy = shapeY + h / 2;
       ctx.translate(cx, cy);
       ctx.rotate(singleShape.rotation);
       ctx.translate(-cx, -cy);

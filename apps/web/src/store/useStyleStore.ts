@@ -25,7 +25,7 @@ interface StyleState {
 }
 
 export const useStyleStore = create<StyleState>((set) => ({
-  strokeColor: DEFAULTS.DEFAULT_STROKE_COLOR,
+  strokeColor: 'blend',
   fillColor: DEFAULTS.DEFAULT_FILL_COLOR,
   strokeWidth: DEFAULTS.DEFAULT_STROKE_WIDTH,
   opacity: DEFAULTS.DEFAULT_OPACITY,

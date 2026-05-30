@@ -2,6 +2,8 @@ import { BaseTool, ToolEvent } from './BaseTool.js';
 import { ShapeFactory } from '../shapes/ShapeFactory.js';
 import { TextShape } from '@canvasync/shared';
 import { TransformUtils } from '../canvas/TransformUtils.js';
+import { useCanvasStore } from '../store/useCanvasStore.js';
+
 
 export const TEXT_FONTS = [
   { id: 'Noto Sans', label: 'Sans', cssFamily: "'Noto Sans', sans-serif" },
@@ -44,11 +46,11 @@ export class TextTool extends BaseTool {
     const styles = styleStore.getState();
     const camera = this.engine.getCamera();
 
-    const fontFamily: string = (window as any).__textFontFamily || 'Inter';
+    const fontFamily: string = (window as any).__textFontFamily || 'Playwrite GB J';
     const fontSize: number = (window as any).__textFontSize || 20;
     const textAlign: 'left' | 'center' | 'right' = (window as any).__textAlign || 'left';
     const fontEntry = TEXT_FONTS.find(f => f.id === fontFamily);
-    const fontCSS = fontEntry ? fontEntry.cssFamily : "'Inter', sans-serif";
+    const fontCSS = fontEntry ? fontEntry.cssFamily : "'Playwrite GB J', cursive";
 
     const shape = ShapeFactory.createShape('text', this.dragStartWorld.x, this.dragStartWorld.y, styles) as TextShape;
     shape.fontSize = fontSize;
@@ -73,6 +75,8 @@ export class TextTool extends BaseTool {
       shape.width = 300;
       shape.height = fontSize * 1.5;
     }
+
+    const initialZoom = camera.zoom;
 
     // Position textarea at screen position
     const screenPos = TransformUtils.worldToScreen(
@@ -121,10 +125,37 @@ export class TextTool extends BaseTool {
       });
     }
 
+    // Dynamic camera tracking for textarea (relative positioning and scaling)
+    const unsubscribe = useCanvasStore.subscribe((state) => {
+      const currentCamera = state.camera;
+      const newScreenPos = TransformUtils.worldToScreen(
+        { x: this.dragStartWorld.x, y: this.dragStartWorld.y },
+        currentCamera as any
+      );
+      
+      const activeCanvasEl = document.querySelector('canvas');
+      const activeCanvasRect = activeCanvasEl?.getBoundingClientRect();
+      const currentOffsetLeft = activeCanvasRect ? activeCanvasRect.left : 0;
+      const currentOffsetTop = activeCanvasRect ? activeCanvasRect.top : 0;
+
+      textarea.style.left = `${newScreenPos.x + currentOffsetLeft}px`;
+      textarea.style.top = `${newScreenPos.y + currentOffsetTop}px`;
+      textarea.style.fontSize = `${fontSize * currentCamera.zoom}px`;
+      
+      const zoomRatio = currentCamera.zoom / initialZoom;
+      textarea.style.width = `${Math.max(80 * currentCamera.zoom, boxWidthScreen * zoomRatio)}px`;
+      textarea.style.minHeight = `${Math.max(fontSize * currentCamera.zoom, boxHeightScreen * zoomRatio)}px`;
+      if (!this.hasMoved) {
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+      }
+    });
+
     let finalized = false;
     const finalize = () => {
       if (finalized) return;
       finalized = true;
+      unsubscribe();
 
       const content = textarea.value.trim();
       if (content) {

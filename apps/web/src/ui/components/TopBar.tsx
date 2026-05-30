@@ -99,12 +99,12 @@ export const TopBar: React.FC<TopBarProps> = ({ onShareClick, canvasName = 'Unti
       }}
     >
       {/* LOGO */}
-      <div
-        className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm text-white mr-0.5"
-        style={{ background: 'var(--accent)', boxShadow: '0 0 12px var(--accent-glow)' }}
-      >
-        C
-      </div>
+      <img
+        src="/favicon.svg"
+        alt="CanvaSync Logo"
+        className="flex-shrink-0 w-7 h-7 rounded-lg object-contain mr-0.5"
+        style={{ filter: 'drop-shadow(0 0 4px var(--accent-glow))' }}
+      />
 
       {/* BOARD NAME */}
       {isEditingName ? (

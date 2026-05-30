@@ -10,8 +10,13 @@ export class HitDetection {
     const shapeW = textMeasured ? textMeasured.width : (shape.width || 0);
     const shapeH = textMeasured ? textMeasured.height : (shape.height || 0);
 
+    let shapeY = shape.y;
+    if (isText) {
+      shapeY += (shape.fontSize || 20) * 0.15;
+    }
+
     const centerX = shape.x + shapeW / 2;
-    const centerY = shape.y + shapeH / 2;
+    const centerY = shapeY + shapeH / 2;
     
     const rotatedPoint = this.rotatePoint(point, { x: centerX, y: centerY }, -shape.rotation);
 
@@ -26,8 +31,8 @@ export class HitDetection {
         return (
           rotatedPoint.x >= shape.x &&
           rotatedPoint.x <= shape.x + shapeW &&
-          rotatedPoint.y >= shape.y &&
-          rotatedPoint.y <= shape.y + shapeH
+          rotatedPoint.y >= shapeY &&
+          rotatedPoint.y <= shapeY + shapeH
         );
       case 'pen': {
         if (shape.width < 1 && shape.height < 1) return false;
@@ -54,11 +59,16 @@ export class HitDetection {
     const shapeW = textMeasured ? textMeasured.width : (shape.width || 0);
     const shapeH = textMeasured ? textMeasured.height : (shape.height || 0);
 
+    let shapeY = shape.y;
+    if (isText) {
+      shapeY += (shape.fontSize || 20) * 0.15;
+    }
+
     const shapeBounds = {
       left: shape.x,
       right: shape.x + shapeW,
-      top: shape.y,
-      bottom: shape.y + shapeH
+      top: shapeY,
+      bottom: shapeY + shapeH
     };
 
     const rectBounds = {
