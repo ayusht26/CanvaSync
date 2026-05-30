@@ -35,9 +35,14 @@ export const RoomPanel: React.FC = () => {
                 className="w-2.5 h-2.5 rounded-full ring-1 ring-white/20"
                 style={{ backgroundColor: col.color || '#888' }}
               />
-              <span className="text-xs font-medium text-slate-200">{col.name || 'Anonymous'}</span>
+              <span className="text-xs font-medium text-slate-200">
+                {col.name || 'Anonymous'} {col.isLocal ? '(You)' : ''}
+              </span>
+              {col.userId && useRoomStore.getState().ownerId === col.userId && (
+                <span className="text-amber-500" title="Owner">👑</span>
+              )}
               {/* Pulsing indicator for active collaborators */}
-              <span className="relative flex h-1.5 w-1.5">
+              <span className="relative flex h-1.5 w-1.5 ml-1">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
               </span>

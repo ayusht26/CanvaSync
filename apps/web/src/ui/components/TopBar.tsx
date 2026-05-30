@@ -3,11 +3,13 @@ import {
   Share2, ChevronDown, Plus, Minus, Copy, Check,
   MousePointer2, Hand, Pencil, Square, Circle,
   Minus as MinusIcon, ArrowRight, Type, Eraser, Triangle, Diamond,
-  Trash2
+  Trash2, Crown
 } from 'lucide-react';
 import { useCanvasStore } from '../../store/useCanvasStore.js';
 import { useRoomStore } from '../../store/useRoomStore.js';
 import { AnimatedThemeToggler } from './AnimatedThemeToggler.js';
+import * as Popover from '@radix-ui/react-popover';
+import { AnimatePresence, motion } from 'framer-motion';
 import { ToolName } from '@canvasync/shared';
 import { SceneGraphService } from '../../canvas/SceneGraphService.js';
 import {
@@ -55,13 +57,28 @@ const TOOL_GROUPS = [
 
 export const TopBar: React.FC<TopBarProps> = ({ onShareClick, canvasName = 'Untitled', onNameChange }) => {
   const { camera, updateCamera, activeTool, setActiveTool } = useCanvasStore();
-  const { roomId, collaborators } = useRoomStore();
+  const { roomId, roomName, ownerId, collaborators } = useRoomStore();
+  
+  // Use fetched roomName if available, else fallback
+  const effectiveName = roomName || canvasName;
+  
   const [isEditingName, setIsEditingName] = useState(false);
-  const [localName, setLocalName] = useState(canvasName);
+  const [localName, setLocalName] = useState(effectiveName);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [isCollabOpen, setIsCollabOpen] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { setLocalName(canvasName); }, [canvasName]);
+  useEffect(() => { setLocalName(effectiveName); }, [effectiveName]);
+
+  const jumpToUser = (user: any) => {
+    if (!user.cursor) return;
+    const zoom = useCanvasStore.getState().camera.zoom;
+    updateCamera({ 
+      x: window.innerWidth / 2 - user.cursor.x * zoom,
+      y: window.innerHeight / 2 - user.cursor.y * zoom
+    });
+    setIsCollabOpen(false);
+  };
 
   const handleShareOrCopy = () => {
     if (roomId) {
@@ -243,27 +260,80 @@ export const TopBar: React.FC<TopBarProps> = ({ onShareClick, canvasName = 'Unti
 
       {/* COLLABORATORS */}
       {collaborators.size > 0 && (
-        <div className="flex -space-x-1.5 flex-shrink-0">
-          {Array.from(collaborators.values()).slice(0, 5).map((col: any, i) => (
-            <div
-              key={col.id || i}
-              title={col.name || 'Anonymous'}
-              className="w-6 h-6 rounded-full border-2 flex items-center justify-center text-[9px] font-bold text-white uppercase"
-              style={{ backgroundColor: col.color || '#888', borderColor: 'var(--bg-surface)' }}
-            >
-              {(col.name || 'A').charAt(0)}
-            </div>
-          ))}
-          {collaborators.size > 5 && (
-            <div
-              className="w-6 h-6 rounded-full border-2 flex items-center justify-center text-[9px] font-bold text-white"
-              style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--bg-surface)', color: 'var(--text-secondary)' }}
-              title={`${collaborators.size - 5} more`}
-            >
-              +{collaborators.size - 5}
-            </div>
-          )}
-        </div>
+        <Popover.Root open={isCollabOpen} onOpenChange={setIsCollabOpen}>
+          <Popover.Trigger asChild>
+            <button className="flex items-center gap-1.5 px-2 py-1 rounded-lg transition-colors hover:bg-[var(--bg-elevated)] group outline-none">
+              <div className="flex -space-x-1.5 flex-shrink-0">
+                {Array.from(collaborators.values()).slice(0, 3).map((col: any, i) => (
+                  <div
+                    key={col.id || i}
+                    title={col.name || 'Anonymous'}
+                    className="w-6 h-6 rounded-full border-2 flex items-center justify-center text-[9px] font-bold text-white uppercase relative z-10"
+                    style={{ backgroundColor: col.color || '#888', borderColor: 'var(--bg-surface)' }}
+                  >
+                    {(col.name || 'A').charAt(0)}
+                  </div>
+                ))}
+              </div>
+              <span className="text-[11px] font-medium text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors">
+                {collaborators.size} online
+              </span>
+            </button>
+          </Popover.Trigger>
+          <AnimatePresence>
+            {isCollabOpen && (
+              <Popover.Portal forceMount>
+                <Popover.Content asChild align="end" sideOffset={8}>
+                  <motion.div
+                    initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                    transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                    className="w-56 rounded-xl p-1 shadow-2xl z-[100]"
+                    style={{ 
+                      background: 'var(--bg-surface)', 
+                      border: '1px solid var(--border)',
+                      boxShadow: '0 10px 40px -10px rgba(0,0,0,0.3)'
+                    }}
+                  >
+                    <div className="px-3 py-2 text-[11px] font-semibold tracking-wider text-[var(--text-muted)] uppercase border-b border-[var(--border)] mb-1">
+                      Online Users
+                    </div>
+                    <div className="max-h-60 overflow-y-auto overflow-x-hidden">
+                      {Array.from(collaborators.values()).map((col: any) => {
+                        const isOwner = col.userId && ownerId && col.userId === ownerId;
+                        return (
+                          <div
+                            key={col.id}
+                            onClick={() => jumpToUser(col)}
+                            className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-pointer transition-colors hover:bg-[var(--bg-elevated)] group"
+                          >
+                            <div
+                              className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-sm flex-shrink-0"
+                              style={{ backgroundColor: col.color || '#888' }}
+                            >
+                              {(col.name || 'A').charAt(0)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-primary)]">
+                                <span className="truncate">{col.name || 'Anonymous'} {col.isLocal ? '(You)' : ''}</span>
+                                {isOwner && (
+                                  <span title="Room Owner" className="flex items-center">
+                                    <Crown size={12} className="text-amber-500" strokeWidth={2.5} />
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+                </Popover.Content>
+              </Popover.Portal>
+            )}
+          </AnimatePresence>
+        </Popover.Root>
       )}
 
       {/* RESET CANVAS */}

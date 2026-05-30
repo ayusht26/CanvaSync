@@ -7,6 +7,7 @@ import { ToolEvent } from '../tools/BaseTool.js';
 import { useCanvasStore } from '../store/useCanvasStore.js';
 import { useSelectionStore } from '../store/useSelectionStore.js';
 import { useStyleStore } from '../store/useStyleStore.js';
+import { useRoomStore } from '../store/useRoomStore.js';
 import { Renderer } from '../renderer/Renderer.js';
 
 export class CanvasEventHandler {
@@ -105,6 +106,13 @@ export class CanvasEventHandler {
       return;
     }
     const toolEvent = this.createToolEvent(e);
+    
+    // Broadcast cursor position for multiplayer
+    const presenceManager = useRoomStore.getState().presenceManager;
+    if (presenceManager) {
+      presenceManager.updateCursor(toolEvent.worldX, toolEvent.worldY);
+    }
+
     const activeTool = this.toolManager.getActiveTool();
     if (activeTool) activeTool.onPointerMove(toolEvent);
     // Re-render so eraser cursor updates

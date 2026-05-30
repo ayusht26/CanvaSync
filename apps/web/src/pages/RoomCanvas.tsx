@@ -34,8 +34,22 @@ const RoomCanvas: React.FC = () => {
   useMultiplayer(showJoin ? null : (id ?? null), sceneGraph);
 
   useEffect(() => {
-    if (id) setRoomId(id);
-    return () => setRoomId(null);
+    if (id) {
+      setRoomId(id);
+      
+      // Fetch room details (name, ownerId) to populate UI
+      import('../multiplayer/RoomManager.js').then(({ RoomManager }) => {
+        RoomManager.getRoom(id).then((room) => {
+          if (room) {
+            useRoomStore.getState().setRoomDetails(room.name, room.ownerId);
+          }
+        });
+      });
+    }
+    return () => {
+      setRoomId(null);
+      useRoomStore.getState().setRoomDetails(null, null);
+    };
   }, [id, setRoomId]);
 
   // Auto-restore user identity from localStorage if available (skip join modal)

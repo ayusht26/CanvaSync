@@ -10,13 +10,14 @@ export class RoomManager {
 
   static async createRoom(name?: string, _initialElements?: Shape[]): Promise<string> {
     const url = `${RoomManager.BASE_URL}/rooms`;
+    const ownerId = useRoomStore.getState().localUserId;
 
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, ownerId }),
     });
 
     if (!response.ok) {

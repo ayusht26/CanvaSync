@@ -24,9 +24,12 @@ export const useMultiplayer = (roomId: string | null, sceneGraph: SceneGraph) =>
     presenceManagerRef.current = presenceManager;
 
     // Set initial user info
-    presenceManager.setUserInfo(localUser.name, localUser.color);
+    presenceManager.setUserInfo(localUser.name, localUser.color, useRoomStore.getState().localUserId);
+    
+    useRoomStore.getState().setPresenceManager(presenceManager);
 
     return () => {
+      useRoomStore.getState().setPresenceManager(null);
       provider.disconnect();
       providerRef.current = null;
       syncManagerRef.current = null;

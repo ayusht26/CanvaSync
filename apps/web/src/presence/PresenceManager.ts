@@ -18,11 +18,13 @@ export class PresenceManager {
       const collaborators = new Map<string, any>();
 
       states.forEach((state, clientID) => {
-        if (clientID === this.awareness.clientID) return;
+        // We include our own local user here so it is tracked in the room store
+        // but we can distinguish it by checking if clientID === this.awareness.clientID
         if (state.user) {
           collaborators.set(clientID.toString(), {
             ...state.user,
             id: clientID.toString(),
+            isLocal: clientID === this.awareness.clientID,
             cursor: state.cursor
           });
         }
@@ -36,7 +38,7 @@ export class PresenceManager {
     this.awareness.setLocalStateField('cursor', { x, y });
   }
 
-  public setUserInfo(name: string, color: string) {
-    this.awareness.setLocalStateField('user', { name, color });
+  public setUserInfo(name: string, color: string, userId: string) {
+    this.awareness.setLocalStateField('user', { name, color, userId });
   }
 }
